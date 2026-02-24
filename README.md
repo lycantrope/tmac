@@ -2,7 +2,7 @@
 
 ### Installation:
 Navigate to the python project directory
-```
+```sh
 git clone https://github.com/Nondairy-Creamer/tmac
 cd tmac
 pip install -e .
@@ -26,7 +26,7 @@ To see an example on synthetic data, install the package into a python project, 
 
 The model can be called in a python project with the following commands, where red and green are numpy matricies of the red and green fluorescence data with dimensions [time, neurons].
 
-```
+```python
 import tmac.models as tm
 
 trained_variables = tm.tmac_ac(red, green)
@@ -34,7 +34,7 @@ trained_variables = tm.tmac_ac(red, green)
 
 Also included are two preprocessing functions. A function to linearly interpolate over time to remove NaNs from the data and one to correct for photobleaching by dividing by an exponential with a single decay constant fit with all the neural data. TMAC assumes a constant mean and no NaNs, so adjustments like this are necessary preprocessing steps, though any method for data imputation and bleach correction will suffice. Using the preprocessing steps:
 
-```
+```python
 import tmac.models as tm
 import tmac.preprocessing as tp
 
@@ -63,7 +63,7 @@ The output dictionary contains
 * The photobleach correction provided shares a bleaching tau across neurons, so is not independent across neurons.
 * Do not temporally filter the data. The Gaussian process prior over a and m will perform the necessary smoothing without reducing temporal resolution.
 * The activity a has mean 1 and units of fold change from the mean. If you want it to be unitful, you can multiply each neuron's activity by the mean over time of the green channel input i.e. 
-```
+```python
 a_unitful = a * np.mean(green_corrected, axis=0, keepdims=True)
 ```
 
