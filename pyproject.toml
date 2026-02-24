@@ -19,6 +19,23 @@ keywords = [
 ]
 license = { file = "LICENSE.md" }
 urls = { homepage = "https://github.com/Nondairy-Creamer/tmac", source = "https://github.com/lycantrope/tmac" }
+
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.10.4,<0.11.0"]
+build-backend = "uv_build"
+
+[project.optional-dependencies]
+cpu = ["jax"]
+tpu = ["jax[tpu]"]
+cuda = ["jax[cuda13]"]
+
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.8",
+    "ruff>=0.15.2",
+]
+cpu = ["jax"]
+
+[tool.uv]
+default-groups = ["dev", "cpu"]

@@ -1,3 +1,7 @@
+from functools import partial
+
+import jax
+import jax.numpy as jnp
 import numpy as np
 import torch
 
@@ -15,6 +19,7 @@ def tmac_evidence(
     log_tau_a,
     log_variance_m,
     log_tau_m,
+    freq,
     threshold=1e8,
     truncate_freq=True,
 ):
@@ -42,46 +47,37 @@ def tmac_evidence(
     """
 
     # exponentiate the log variances and invert the noise variances
-    variance_r_noise = torch.exp(log_variance_r_noise)
-    variance_g_noise = torch.exp(log_variance_g_noise)
-    variance_a = torch.exp(log_variance_a)
-    length_scale_a = torch.exp(log_tau_a)
-    variance_m = torch.exp(log_variance_m)
-    length_scale_m = torch.exp(log_tau_m)
+    variance_r_noise = jnp.exp(log_variance_r_noise)
+    variance_g_noise = jnp.exp(log_variance_g_noise)
+    variance_a = jnp.exp(log_variance_a)
+    length_scale_a = jnp.exp(log_tau_a)
+    variance_m = jnp.exp(log_variance_m)
+    length_scale_m = jnp.exp(log_tau_m)
 
     variance_r_noise_inv = 1 / variance_r_noise
     variance_g_noise_inv = 1 / variance_g_noise
-
-    device = r.device
     dtype = r.dtype
-
-    # calculate the gaussian process components in fourier space
+    # smallest length scale (longest in fourier space)
+    min_length = jnp.array((length_scale_a, length_scale_m)).min()
     t_max = r.shape[0]
 
-    all_freq = tfo.get_fourier_freq(t_max)
-    all_freq = torch.tensor(all_freq, device=device, dtype=dtype)
-    # smallest length scale (longest in fourier space)
-    min_length = torch.min(length_scale_a.detach(), length_scale_m.detach())
-
     if truncate_freq:
-        max_freq = 2 * np.log(threshold) / min_length**2
-        frequencies_to_keep = all_freq**2 < max_freq
+        max_freq = 2 * jnp.log(threshold) / min_length**2
+        mask = (freq**2 < max_freq).astype(freq.dtype)
     else:
-        frequencies_to_keep = np.full(all_freq.shape, True)
+        mask = jnp.ones_like(freq)
 
-    freq = all_freq[frequencies_to_keep]
-    n_freq = len(freq)
-    cutoff = torch.tensor(1 / threshold, device=device, dtype=dtype)
+    cutoff = jnp.array(1 / threshold, dtype=dtype)
 
     # compute the diagonals of the covariances in fourier space
-    covariance_a_fft = torch.maximum(
-        torch.exp(-0.5 * freq**2 * length_scale_a**2), cutoff
+    covariance_a_fft = jnp.maximum(
+        jnp.exp(-0.5 * freq**2 * length_scale_a**2) * mask, cutoff
     )
     covariance_a_fft = (
         variance_a * (length_scale_a * np.sqrt(2 * np.pi)) * covariance_a_fft
     )
-    covariance_m_fft = torch.maximum(
-        torch.exp(-0.5 * freq**2 * length_scale_m**2), cutoff
+    covariance_m_fft = jnp.maximum(
+        jnp.exp(-0.5 * freq**2 * length_scale_m**2) * mask, cutoff
     )
     covariance_m_fft = (
         variance_m * (length_scale_m * np.sqrt(2 * np.pi)) * covariance_m_fft
@@ -89,7 +85,7 @@ def tmac_evidence(
 
     f11 = 1 / covariance_a_fft + variance_g_noise_inv
     f22 = 1 / covariance_m_fft + variance_r_noise_inv + variance_g_noise_inv
-    f12 = torch.tile(variance_g_noise_inv, f11.shape)
+    f12 = jnp.tile(variance_g_noise_inv, f11.shape)
 
     f_det = f11 * f22 - f12**2
 
@@ -100,19 +96,17 @@ def tmac_evidence(
     f12_inv = -f12 / f22 / k
 
     log_det_term = -(
-        torch.log(f_det).sum()
-        + torch.log(covariance_a_fft * covariance_m_fft).sum()
-        + t_max * torch.log(variance_g_noise * variance_r_noise)
+        jnp.log(f_det).sum()
+        + jnp.log(covariance_a_fft * covariance_m_fft).sum()
+        + t_max * jnp.log(variance_g_noise * variance_r_noise)
     )
 
     # compute the quadratic term
-    fourier_r_trimmed = fourier_r[frequencies_to_keep]
-    fourier_g_trimmed = fourier_g[frequencies_to_keep]
 
     auto_corr_term = (variance_r_noise_inv * r**2 + variance_g_noise_inv * g**2).sum()
 
-    normalized_r_fft = variance_r_noise_inv * fourier_r_trimmed
-    normalized_g_fft = variance_g_noise_inv * fourier_g_trimmed
+    normalized_r_fft = variance_r_noise_inv * fourier_r
+    normalized_g_fft = variance_g_noise_inv * fourier_g
 
     f_quad_mult_1 = normalized_g_fft
     f_quad_mult_2 = normalized_r_fft + normalized_g_fft
@@ -125,7 +119,7 @@ def tmac_evidence(
 
     quad_term = -(auto_corr_term - f_quad)
 
-    return torch.mean(log_det_term + quad_term)
+    return jnp.mean(log_det_term + quad_term)
 
 
 def tmac_posterior(
@@ -166,12 +160,12 @@ def tmac_posterior(
     """
 
     # exponentiate the log variances and invert the noise variances
-    variance_r_noise = torch.exp(log_variance_r_noise)
-    variance_g_noise = torch.exp(log_variance_g_noise)
-    variance_a = torch.exp(log_variance_a)
-    length_scale_a = torch.exp(log_tau_a)
-    variance_m = torch.exp(log_variance_m)
-    length_scale_m = torch.exp(log_tau_m)
+    variance_r_noise = jnp.exp(log_variance_r_noise)
+    variance_g_noise = jnp.exp(log_variance_g_noise)
+    variance_a = jnp.exp(log_variance_a)
+    length_scale_a = jnp.exp(log_tau_a)
+    variance_m = jnp.exp(log_variance_m)
+    length_scale_m = jnp.exp(log_tau_m)
 
     variance_r_noise_inv = 1 / variance_r_noise
     variance_g_noise_inv = 1 / variance_g_noise
@@ -183,37 +177,31 @@ def tmac_posterior(
     t_max = r.shape[0]
 
     all_freq = tfo.get_fourier_freq(t_max)
-    all_freq = torch.tensor(all_freq, device=device, dtype=dtype)
     # smallest length scale (longest in fourier space)
-    min_length = torch.min(length_scale_a.detach(), length_scale_m.detach())
+    min_length = jnp.array((length_scale_a, length_scale_m)).min()
 
     if truncate_freq:
-        max_freq = 2 * np.log(threshold) / min_length**2
+        max_freq = 2 * jnp.log(threshold) / min_length**2
         frequencies_to_keep = all_freq**2 < max_freq
     else:
-        frequencies_to_keep = np.full(all_freq.shape, True)
+        frequencies_to_keep = jnp.full(all_freq.shape, True)
 
     freq = all_freq[frequencies_to_keep]
-
-    cutoff = torch.tensor(1 / threshold, device=device, dtype=dtype)
+    cutoff = jnp.array(1 / threshold, device=device, dtype=dtype)
 
     # compute the diagonals of the covariances in fourier space
-    covariance_a_fft = torch.maximum(
-        torch.exp(-0.5 * freq**2 * length_scale_a**2), cutoff
-    )
+    covariance_a_fft = jnp.maximum(jnp.exp(-0.5 * freq**2 * length_scale_a**2), cutoff)
     covariance_a_fft = (
-        variance_a * (length_scale_a * np.sqrt(2 * np.pi)) * covariance_a_fft
+        variance_a * (length_scale_a * jnp.sqrt(2 * jnp.pi)) * covariance_a_fft
     )
-    covariance_m_fft = torch.maximum(
-        torch.exp(-0.5 * freq**2 * length_scale_m**2), cutoff
-    )
+    covariance_m_fft = jnp.maximum(jnp.exp(-0.5 * freq**2 * length_scale_m**2), cutoff)
     covariance_m_fft = (
         variance_m * (length_scale_m * np.sqrt(2 * np.pi)) * covariance_m_fft
     )
 
     f11 = 1 / covariance_a_fft + variance_g_noise_inv
     f22 = 1 / covariance_m_fft + variance_r_noise_inv + variance_g_noise_inv
-    f12 = torch.tile(variance_g_noise_inv, f11.shape)
+    f12 = jnp.tile(variance_g_noise_inv, f11.shape)
 
     k = f11 - f12**2 / f22
 
@@ -234,11 +222,11 @@ def tmac_posterior(
     a_fft = f11_inv * f_quad_mult_1 + f12_inv * f_quad_mult_2
     m_fft = f22_inv * f_quad_mult_2 + f12_inv * f_quad_mult_1
 
-    m_padded = torch.zeros_like(r, device=device, dtype=dtype)
-    a_padded = torch.zeros_like(r, device=device, dtype=dtype)
+    m_padded = jnp.zeros_like(r, device=device, dtype=dtype)
+    a_padded = jnp.zeros_like(r, device=device, dtype=dtype)
 
-    m_padded[frequencies_to_keep] = m_fft
-    a_padded[frequencies_to_keep] = a_fft
+    m_padded.at[frequencies_to_keep].set(m_fft)
+    a_padded.at[frequencies_to_keep].set(a_fft)
 
     m_hat = tfo.real_ifft(m_padded)
     a_hat = tfo.real_ifft(a_padded)

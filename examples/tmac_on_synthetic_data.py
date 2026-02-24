@@ -1,9 +1,9 @@
-from matplotlib import pyplot as plt
+import matplotlib.pyplot as plt
 import numpy as np
+
 import tmac.models as tm
 import tmac.preprocessing as tp
-from tmac.synthetic_data import generate_synthetic_data, col_corr, ratio_model
-
+from tmac.synthetic_data import col_corr, generate_synthetic_data, ratio_model
 
 # set the parameters of the synthetic data
 num_ind = 1000
@@ -20,34 +20,45 @@ frac_nan = 0.05
 beta = 20
 
 # generate synthetic data
-red_bleached, green_bleached, a_true, m_true = generate_synthetic_data(num_ind, num_neurons, mean_r, mean_g,
-                                                                       variance_noise_r_true, variance_noise_g_true,
-                                                                       variance_a_true, variance_m_true,
-                                                                       tau_a_true, tau_m_true,
-                                                                       frac_nan=frac_nan, beta=beta,
-                                                                       multiplicative=False)
+red_bleached, green_bleached, a_true, m_true = generate_synthetic_data(
+    num_ind,
+    num_neurons,
+    mean_r,
+    mean_g,
+    variance_noise_r_true,
+    variance_noise_g_true,
+    variance_a_true,
+    variance_m_true,
+    tau_a_true,
+    tau_m_true,
+    frac_nan=frac_nan,
+    beta=beta,
+    multiplicative=False,
+)
 
 # divide out the photobleaching
 red = tp.photobleach_correction(red_bleached)
 green = tp.photobleach_correction(green_bleached)
-
+print("raw", red.shape, green.shape)
 # get rid of nans via linear interpolation
 red = tp.interpolate_over_nans(red)[0]
 green = tp.interpolate_over_nans(green)[0]
+print("raw", red.shape, green.shape)
 
 # infer the model parameters
-trained_variables = tm.tmac_ac(red, green, verbose=True)
+trained_variables = tm.tmac_ac(red, green, verbose=True, truncate_freq=False)
 
 ## Plotting ##
 # pull out the trained variables
-a_trained = trained_variables['a']
-m_trained = trained_variables['m']
-variance_r_noise_trained = trained_variables['variance_r_noise']
-variance_g_noise_trained = trained_variables['variance_g_noise']
-variance_a_trained = trained_variables['variance_a']
-variance_m_trained = trained_variables['variance_m']
-length_scale_a_trained = trained_variables['length_scale_a']
-length_scale_m_trained = trained_variables['length_scale_m']
+a_trained = trained_variables["a"]
+m_trained = trained_variables["m"]
+variance_r_noise_trained = trained_variables["variance_r_noise"]
+variance_g_noise_trained = trained_variables["variance_g_noise"]
+variance_a_trained = trained_variables["variance_a"]
+variance_m_trained = trained_variables["variance_m"]
+length_scale_a_trained = trained_variables["length_scale_a"]
+length_scale_m_trained = trained_variables["length_scale_m"]
+print(f"{a_trained.shape}")
 
 # calculate the prediction from the ratio model
 ratio = ratio_model(red, green, tau_a_true / 2)
@@ -57,92 +68,106 @@ plot_ind = 0
 plot_start = 150
 plot_time = 100
 
-plt.figure()
+fig = plt.figure()
 green_fold_change = green / np.mean(green, axis=0)
 red_fold_change = red / np.mean(red, axis=0)
+
 # plot the green fluorescence
-axes = plt.subplot(3, 1, 1)
-plt.plot(green_fold_change[plot_start:plot_start+plot_time, plot_ind])
-plt.plot(red_fold_change[plot_start:plot_start+plot_time, plot_ind])
-plt.plot([0, plot_time], [1, 1])
-lims = np.array(axes.get_ylim())
+ax = fig.add_subplot(3, 1, 1)
+ax.plot(green_fold_change[plot_start : plot_start + plot_time, plot_ind])
+ax.plot(red_fold_change[plot_start : plot_start + plot_time, plot_ind])
+ax.plot([0, plot_time], [1, 1])
+lims = np.array(ax.get_ylim())
 lim_to_use = np.max(np.abs(lims - 1))
-axes.set_ylim([-lim_to_use + 1, lim_to_use + 1])
-plt.legend(['green', 'red'])
+ax.set_ylim([-lim_to_use + 1, lim_to_use + 1])
+ax.legend(["green", "red"])
 
 # plot the true activity against the inferred activity
-axes = plt.subplot(3, 1, 2)
-plt.plot(a_true[plot_start:plot_start+plot_time, plot_ind])
-plt.plot(a_trained[plot_start:plot_start+plot_time, plot_ind])
-plt.plot([0, plot_time], [1, 1])
-lims = np.array(axes.get_ylim())
+ax = fig.add_subplot(3, 1, 2)
+ax.plot(a_true[plot_start : plot_start + plot_time, plot_ind])
+ax.plot(a_trained[plot_start : plot_start + plot_time, plot_ind])
+ax.plot([0, plot_time], [1, 1])
+lims = np.array(ax.get_ylim())
 lim_to_use = np.max(np.abs(lims - 1))
-axes.set_ylim([-lim_to_use + 1, lim_to_use + 1])
-plt.legend(['a_true', 'a_trained'])
+ax.set_ylim([-lim_to_use + 1, lim_to_use + 1])
+ax.legend(["a_true", "a_trained"])
 
 # plot the motion artifact
-axes = plt.subplot(3, 1, 3)
-plt.plot(m_true[plot_start:plot_start+plot_time, plot_ind])
-plt.plot(m_trained[plot_start:plot_start+plot_time, plot_ind])
-plt.plot([0, plot_time], [0, 0])
-lims = axes.get_ylim()
+ax = fig.add_subplot(3, 1, 3)
+ax.plot(m_true[plot_start : plot_start + plot_time, plot_ind])
+ax.plot(m_trained[plot_start : plot_start + plot_time, plot_ind])
+ax.plot([0, plot_time], [0, 0])
+lims = ax.get_ylim()
 lim_to_use = np.max(np.abs(lims))
-axes.set_ylim([-lim_to_use, lim_to_use])
-plt.legend(['m_true', 'm_trained'])
-plt.xlabel('time')
-plt.ylabel('activity')
+ax.set_ylim([-lim_to_use, lim_to_use])
+ax.legend(["m_true", "m_trained"])
+ax.set_xlabel("time")
+ax.set_ylabel("activity")
 plt.show()
 
 # ratio vs TMAC performance
-ratio_corelation_squared = col_corr(a_true, ratio)**2
-tmac_corelation_squared = col_corr(a_true, a_trained)**2
+ratio_corelation_squared = col_corr(a_true, ratio) ** 2
+tmac_corelation_squared = col_corr(a_true, a_trained) ** 2
 
-plt.figure()
-axes = plt.subplot(1, 2, 1)
-plt.violinplot([ratio_corelation_squared, tmac_corelation_squared])
-axes.set_ylim([0, 1])
-plt.ylabel('correlation squared')
-axes.set_xticks([1, 2])
-axes.set_xticklabels(['ratio', 'inference'])
-axes = plt.subplot(1, 2, 2)
-plt.violinplot(tmac_corelation_squared - ratio_corelation_squared)
-lims = np.array(axes.get_ylim())
+fig = plt.figure()
+ax = fig.add_subplot(1, 2, 1)
+ax.violinplot([ratio_corelation_squared, tmac_corelation_squared])
+ax.set_ylim([0, 1])
+ax.set_ylabel("correlation squared")
+ax.set_xticks([1, 2])
+ax.set_xticklabels(["ratio", "inference"])
+
+ax = fig.add_subplot(1, 2, 2)
+ax.violinplot(tmac_corelation_squared - ratio_corelation_squared)
+lims = np.array(ax.get_ylim())
 lim_to_use = np.max(np.abs(lims))
-axes.set_ylim([-lim_to_use, lim_to_use])
-plt.plot([0.5, 1.5], [0, 0], '-k')
-axes.set_xticks([1])
-axes.set_xticklabels(['inference - ratio score'])
+ax.set_ylim([-lim_to_use, lim_to_use])
+ax.plot([0.5, 1.5], [0, 0], "-k")
+ax.set_xticks([1])
+ax.set_xticklabels(["inference - ratio score"])
 plt.show()
 
 # Plot scatter plot of true activity against inferred activity
 # get y=x line
 lower = np.min(a_true[:, plot_ind])
 upper = np.max(a_true[:, plot_ind])
-plt.figure()
-plt.scatter(a_true[:, plot_ind], a_trained[:, plot_ind])
-plt.plot([lower, upper], [lower, upper], 'r')
-plt.xlabel('true value of a(t)')
-plt.ylabel('inferred value of a(t)')
+fig = plt.figure()
+ax = fig.add_subplot(111)
+ax.scatter(a_true[:, plot_ind], a_trained[:, plot_ind])
+ax.plot([lower, upper], [lower, upper], "r")
+ax.set_xlabel("true value of a(t)")
+ax.set_ylabel("inferred value of a(t)")
 plt.show()
 
 # Violin plot of hyperparameter fits over neurons
-plt.figure()
-axes = plt.subplot(1, 2, 1)
-plt.violinplot([variance_a_trained, variance_m_trained, variance_g_noise_trained, variance_r_noise_trained])
-plt.scatter(np.arange(1, 5), [variance_a_true, variance_m_true, variance_noise_g_true, variance_noise_r_true], color='g', marker='o')
-ylim = axes.get_ylim()
-axes.set_ylim([0, ylim[1]])
-axes.set_xticks(np.arange(4) + 1)
-axes.set_xticklabels(['var_a', 'var_m', 'var_g', 'var_r'])
-plt.ylabel('parameter value')
-plt.legend(['inferred', 'true'])
+fig = plt.figure()
+ax = fig.add_subplot(1, 2, 1)
+ax.violinplot(
+    [
+        variance_a_trained,
+        variance_m_trained,
+        variance_g_noise_trained,
+        variance_r_noise_trained,
+    ]
+)
+ax.scatter(
+    np.arange(1, 5),
+    [variance_a_true, variance_m_true, variance_noise_g_true, variance_noise_r_true],
+    color="g",
+    marker="o",
+)
+ylim = ax.get_ylim()
+ax.set_ylim([0, ylim[1]])
+ax.set_xticks(np.arange(4) + 1)
+ax.set_xticklabels(["var_a", "var_m", "var_g", "var_r"])
+ax.set_ylabel("parameter value")
+ax.legend(["inferred", "true"])
 
-axes = plt.subplot(1, 2, 2)
-plt.violinplot([length_scale_a_trained, length_scale_m_trained])
-plt.scatter(np.arange(1, 3), [tau_a_true, tau_m_true], color='g', marker='o')
-ylim = axes.get_ylim()
-axes.set_ylim([0, ylim[1]])
-axes.set_xticks(np.arange(2) + 1)
-axes.set_xticklabels(['tau_a', 'tau_m'])
+ax = fig.add_subplot(1, 2, 2)
+ax.violinplot([length_scale_a_trained, length_scale_m_trained])
+ax.scatter(np.arange(1, 3), [tau_a_true, tau_m_true], color="g", marker="o")
+ylim = ax.get_ylim()
+ax.set_ylim([0, ylim[1]])
+ax.set_xticks(np.arange(2) + 1)
+ax.set_xticklabels(["tau_a", "tau_m"])
 plt.show()
-

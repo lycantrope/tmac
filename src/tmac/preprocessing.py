@@ -1,3 +1,5 @@
+import jax
+import jax.numpy as jnp
 import numpy as np
 import torch
 from scipy import interpolate
@@ -5,9 +7,10 @@ from scipy import interpolate
 import tmac.optimization as opt
 
 
-def check_input_format(data):
-    if not isinstance(data, np.ndarray):
-        raise TypeError("The red and green matricies must be the numpy arrays")
+def check_input_format(data) -> jax.Array:
+
+    if not isinstance(data, (np.ndarray, jax.Array)):
+        raise TypeError("The red and green matricies must be the numpy or jax arrays")
 
     if data.ndim not in (1, 2):
         raise ValueError("The red and green matricies should be 1 or 2 dimensional")
@@ -15,7 +18,7 @@ def check_input_format(data):
     if data.ndim == 1:
         data = data[:, None]
 
-    return data
+    return jnp.array(data)
 
 
 def interpolate_over_nans(input_mat, t=None):

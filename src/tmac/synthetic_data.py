@@ -1,16 +1,33 @@
+import jax
+import jax.numpy as jnp
 import numpy as np
+from jax import random
+from scipy import signal, stats
+
 import tmac.fourier as tfo
-from scipy import stats, signal
 
 
-def softplus(x, beta=50):
-    return np.log(1 + np.exp(beta * x)) / beta
+def softplus(x, beta: float = 50) -> jax.Array:
+    return jnp.log(1 + jnp.exp(beta * x)) / beta
 
 
-def generate_synthetic_data(num_ind, num_neurons, mean_r, mean_g, variance_noise_r, variance_noise_g,
-                            variance_a, variance_m, tau_a, tau_m,
-                            frac_nan=0.0, beta=20, multiplicative=False, rng_seed=None):
-    """ Function that generates synthetic two channel imaging data
+def generate_synthetic_data(
+    num_ind: int,
+    num_neurons: int,
+    mean_r: float,
+    mean_g: float,
+    variance_noise_r: float,
+    variance_noise_g: float,
+    variance_a: float,
+    variance_m: float,
+    tau_a: float,
+    tau_m: float,
+    frac_nan: float = 0.0,
+    beta: float = 20,
+    multiplicative: bool = False,
+    rng_seed: int = 42,
+):
+    """Function that generates synthetic two channel imaging data
 
     Args:
         num_ind: number of measurements in time
@@ -33,24 +50,44 @@ def generate_synthetic_data(num_ind, num_neurons, mean_r, mean_g, variance_noise
         a: activity Gaussian process
         m: motion artifact Gaussian process
     """
-    rng = np.random.default_rng(rng_seed)
-
+    key = random.key(jnp.array(rng_seed))
+    key, *subkeys = random.split(key, num=6)
     fourier_basis, frequency_vec = tfo.get_fourier_basis(num_ind)
 
     # get the diagonal of radial basis kernel in fourier space
-    c_diag_a = variance_a * tau_a * np.sqrt(2 * np.pi) * np.exp(-0.5 * frequency_vec**2 * tau_a**2)
-    c_diag_m = variance_m * tau_m * np.sqrt(2 * np.pi) * np.exp(-0.5 * frequency_vec**2 * tau_m**2)
+    c_diag_a = (
+        variance_a
+        * tau_a
+        * jnp.sqrt(2 * jnp.pi)
+        * jnp.exp(-0.5 * frequency_vec**2 * tau_a**2)
+    )
+    c_diag_m = (
+        variance_m
+        * tau_m
+        * jnp.sqrt(2 * jnp.pi)
+        * jnp.exp(-0.5 * frequency_vec**2 * tau_m**2)
+    )
 
-    a = fourier_basis @ (np.sqrt(c_diag_a[:, None]) * rng.standard_normal((num_ind, num_neurons)))
-    m = fourier_basis @ (np.sqrt(c_diag_m[:, None]) * rng.standard_normal((num_ind, num_neurons)))
+    a = fourier_basis @ (
+        jnp.sqrt(c_diag_a[:, None])
+        * random.normal(key=subkeys[0], shape=(num_ind, num_neurons))
+    )
+    m = fourier_basis @ (
+        jnp.sqrt(c_diag_m[:, None])
+        * random.normal(key=subkeys[1], shape=(num_ind, num_neurons))
+    )
 
     # keep a and m from being negative for the multiplicative model
     # a has mean 1, m has mean 0
     a = softplus(a + 1, beta=beta)
     m = softplus(m + 1, beta=beta) - 1
 
-    noise_r = np.sqrt(variance_noise_r) * rng.standard_normal((num_ind, num_neurons))
-    noise_g = np.sqrt(variance_noise_g) * rng.standard_normal((num_ind, num_neurons))
+    noise_r = jnp.sqrt(variance_noise_r) * random.normal(
+        key=subkeys[2], shape=(num_ind, num_neurons)
+    )
+    noise_g = jnp.sqrt(variance_noise_g) * random.normal(
+        key=subkeys[3], shape=(num_ind, num_neurons)
+    )
 
     red_true = mean_r * softplus(m + 1 + noise_r, beta=beta)
 
@@ -61,25 +98,27 @@ def generate_synthetic_data(num_ind, num_neurons, mean_r, mean_g, variance_noise
 
     # add photobleaching
     photo_tau = num_ind / 3
-    red_bleached = red_true * np.exp(-np.arange(num_ind)[:, None] / photo_tau)
-    green_bleached = green_true * np.exp(-np.arange(num_ind)[:, None] / photo_tau)
+    red_bleached = red_true * jnp.exp(-jnp.arange(num_ind)[:, None] / photo_tau)
+    green_bleached = green_true * jnp.exp(-jnp.arange(num_ind)[:, None] / photo_tau)
 
     # nan a few values
-    ind_to_nan = rng.random(num_ind) <= frac_nan
-    red_bleached[ind_to_nan, :] = np.array('nan')
-    green_bleached[ind_to_nan, :] = np.array('nan')
+    ind_to_nan = random.uniform(subkeys[4], shape=(num_ind,)) <= frac_nan
+    red_bleached.at[ind_to_nan, :].set(jnp.nan)
+    green_bleached.at[ind_to_nan, :].set(jnp.nan)
 
     return red_bleached, green_bleached, a, m
 
 
 def col_corr(a_true, a_hat):
     """Calculate pearson correlation coefficient between each column of a_true and a_hat"""
-    corr = np.zeros(a_true.shape[1])
+    corr = jnp.zeros(a_true.shape[1])
 
     for c in range(a_true.shape[1]):
-        true_vec = a_true[:, c] - np.mean(a_true[:, c])
-        hat_vec = a_hat[:, c] - np.mean(a_hat[:, c])
-        corr[c] = np.mean(true_vec * hat_vec) / np.std(true_vec) / np.std(hat_vec)
+        true_vec = a_true[:, c] - jnp.mean(a_true[:, c])
+        hat_vec = a_hat[:, c] - jnp.mean(a_hat[:, c])
+        corr.at[c].set(
+            jnp.mean(true_vec * hat_vec) / jnp.std(true_vec) / jnp.std(hat_vec)
+        )
 
     return corr
 
@@ -94,8 +133,8 @@ def ratio_model(red, green, tau):
     num_filter_ind = np.round(tau * num_std) * 2 + 1
     filter_x = np.arange(num_filter_ind) - (num_filter_ind - 1) / 2
     filter_shape = stats.norm.pdf(filter_x / tau) / tau
-    green_filtered = signal.convolve2d(green, filter_shape[:, None], 'same')
-    red_filtered = signal.convolve2d(red, filter_shape[:, None], 'same')
+    green_filtered = signal.convolve2d(green, filter_shape[:, None], "same")
+    red_filtered = signal.convolve2d(red, filter_shape[:, None], "same")
     ratio = green_filtered / red_filtered - 1
 
     return ratio
