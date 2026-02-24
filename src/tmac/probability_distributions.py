@@ -70,7 +70,7 @@ def tmac_evidence(
         frequencies_to_keep = np.full(all_freq.shape, True)
 
     freq = all_freq[frequencies_to_keep]
-    n_freq = len(freq)
+    # n_freq = len(freq)
     cutoff = torch.tensor(1 / threshold, device=device, dtype=dtype)
 
     # compute the diagonals of the covariances in fourier space

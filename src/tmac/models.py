@@ -1,4 +1,5 @@
 import time
+from dataclasses import dataclass
 
 import numpy as np
 import torch
@@ -11,6 +12,34 @@ import tmac.preprocessing as pp
 import tmac.probability_distributions as tpd
 
 
+@dataclass(slots=True, frozen=True)
+class TMACResult:
+    a: np.ndarray
+    m: np.ndarray
+    variance_r_noise: np.ndarray
+    variance_g_noise: np.ndarray
+    variance_a: np.ndarray
+    length_scale_a: np.ndarray
+    variance_m: np.ndarray
+    length_scale_m: np.ndarray
+
+    def __getitem__(self, key):
+        if key not in self.__slots__:
+            raise KeyError(key)
+        return getattr(self, key)
+
+    def __repr__(self) -> str:
+        fmt = []
+        for key in self.__slots__:
+            val = getattr(self, key)
+            if hasattr(val, "shape"):
+                fmt.append(f"{key}=Array{val.shape}")
+            else:
+                fmt.append(f"{key}={val}")
+
+        return f"TMACResult({', '.join(fmt)})"
+
+
 def tmac_ac(
     red_np,
     green_np,
@@ -18,7 +47,7 @@ def tmac_ac(
     verbose=False,
     truncate_freq=True,
     device="cpu",
-):
+) -> TMACResult:
     """Implementation of the Two-channel motion artifact correction method (TMAC)
 
     This is tmac_ac because it is the additive and circular boundary version
@@ -42,17 +71,15 @@ def tmac_ac(
     red_np = pp.check_input_format(red_np)
     green_np = pp.check_input_format(green_np)
 
-    red_nan = np.any(np.isnan(red_np))
-    red_inf = np.any(np.isinf(red_np))
-    green_nan = np.any(np.isnan(green_np))
-    green_inf = np.any(np.isinf(green_np))
+    assert np.all(np.isfinite(red_np)) and np.all(
+        np.isfinite(green_np)
+    ), "Input data cannot have any nan or inf"
 
-    if red_nan or red_inf or green_nan or green_inf:
-        raise Exception("Input data cannot have any nan or inf")
+    assert (
+        red_np.shape == green_np.shape
+    ), "red and green matricies must be the same shape"
 
-    if red_np.shape != green_np.shape:
-        raise Exception("red and green matricies must be the same shape")
-
+    T, C = red_np.shape
     # convert data to units of fold mean and subtract mean
     mean_red = np.mean(red_np, axis=0)
     mean_green = np.mean(green_np, axis=0)
@@ -72,22 +99,22 @@ def tmac_ac(
     variance_m_init = np.var(red_np, axis=0)
 
     # initialize length scale
-    length_scale_a_init = np.ones(red_np.shape[1])
-    length_scale_m_init = np.ones(red_np.shape[1])
+    length_scale_a_init = np.ones(C)
+    length_scale_m_init = np.ones(C)
 
     # preallocate space for all the training variables
-    a_trained = np.zeros(red_np.shape)
-    m_trained = np.zeros(red_np.shape)
-    variance_r_noise_trained = np.zeros(variance_r_noise_init.shape)
-    variance_g_noise_trained = np.zeros(variance_g_noise_init.shape)
-    variance_a_trained = np.zeros(variance_a_init.shape)
-    length_scale_a_trained = np.zeros(length_scale_a_init.shape)
-    variance_m_trained = np.zeros(variance_m_init.shape)
-    length_scale_m_trained = np.zeros(length_scale_m_init.shape)
+    a_trained = np.zeros((T, C), dtype=red_np.dtype)
+    m_trained = np.zeros((T, C), dtype=red_np.dtype)
+    variance_r_noise_trained = np.zeros(C)
+    variance_g_noise_trained = np.zeros(C)
+    variance_a_trained = np.zeros(C)
+    length_scale_a_trained = np.zeros(C)
+    variance_m_trained = np.zeros(C)
+    length_scale_m_trained = np.zeros(C)
 
     # loop through each neuron and perform inference
     start = time.time()
-    for n in range(red_np.shape[1]):
+    for n in range(C):
         # get the initial values for the hyperparameters of this neuron
         # All hyperparameters are positive, so we fit them in log space
         evidence_training_variables = np.log(
@@ -102,18 +129,24 @@ def tmac_ac(
         )
 
         # define the evidence loss function. This function takes in and returns pytorch tensors
-        def evidence_loss_fn(training_variables):
+        def evidence_loss_fn(
+            training_variables,
+            r=red[:, n],
+            fourier_r=red_fft[:, n],
+            g=green[:, n],
+            fourier_g=green_fft[:, n],
+        ):
             return -tpd.tmac_evidence(
-                red[:, n],
-                red_fft[:, n],
-                training_variables[0],
-                green[:, n],
-                green_fft[:, n],
-                training_variables[1],
-                training_variables[2],
-                training_variables[3],
-                training_variables[4],
-                training_variables[5],
+                r=r,
+                fourier_r=fourier_r,
+                log_variance_r_noise=training_variables[0],
+                g=g,
+                fourier_g=fourier_g,
+                log_variance_g_noise=training_variables[1],
+                log_variance_a=training_variables[2],
+                log_tau_a=training_variables[3],
+                log_variance_m=training_variables[4],
+                log_tau_m=training_variables[5],
                 truncate_freq=truncate_freq,
             )
 
@@ -143,43 +176,33 @@ def tmac_ac(
             trained_variance_torch[5],
             truncate_freq=truncate_freq,
         )
-
+        trained_variance_exp = torch.exp(trained_variance_torch).numpy()
         a_trained[:, n] = a.numpy()
         m_trained[:, n] = m.numpy()
-        variance_r_noise_trained[n] = torch.exp(trained_variance_torch[0]).numpy()
-        variance_g_noise_trained[n] = torch.exp(trained_variance_torch[1]).numpy()
-        variance_a_trained[n] = torch.exp(trained_variance_torch[2]).numpy()
-        length_scale_a_trained[n] = torch.exp(trained_variance_torch[3]).numpy()
-        variance_m_trained[n] = torch.exp(trained_variance_torch[4]).numpy()
-        length_scale_m_trained[n] = torch.exp(trained_variance_torch[5]).numpy()
+        variance_r_noise_trained[n] = trained_variance_exp[0]
+        variance_g_noise_trained[n] = trained_variance_exp[1]
+        variance_a_trained[n] = trained_variance_exp[2]
+        length_scale_a_trained[n] = trained_variance_exp[3]
+        variance_m_trained[n] = trained_variance_exp[4]
+        length_scale_m_trained[n] = trained_variance_exp[5]
 
         if verbose:
-            decimals = 1e3
             # print out timing
             elapsed = time.time() - start
             remaining = elapsed / (n + 1) * (red_np.shape[1] - (n + 1))
-            elapsed_truncated = np.round(elapsed * decimals) / decimals
-            remaining_truncated = np.round(remaining * decimals) / decimals
-            print(str(n + 1) + "/" + str(red_np.shape[1]) + " neurons complete")
-            print(
-                str(elapsed_truncated)
-                + "s elapsed, estimated "
-                + str(remaining_truncated)
-                + "s remaining"
-            )
+            print(f"{n+1:d}/{C:d} neurons complete")
+            print(f"{elapsed:.3f}s elapsed, estimated {remaining:.3f}s remaining")
 
-    trained_variables = {
-        "a": a_trained,
-        "m": m_trained,
-        "variance_r_noise": variance_r_noise_trained,
-        "variance_g_noise": variance_g_noise_trained,
-        "variance_a": variance_a_trained,
-        "length_scale_a": length_scale_a_trained,
-        "variance_m": variance_m_trained,
-        "length_scale_m": length_scale_m_trained,
-    }
-
-    return trained_variables
+    return TMACResult(
+        a=a_trained,
+        m=m_trained,
+        variance_r_noise=variance_r_noise_trained,
+        variance_g_noise=variance_g_noise_trained,
+        variance_a=variance_a_trained,
+        length_scale_a=length_scale_a_trained,
+        variance_m=variance_m_trained,
+        length_scale_m=length_scale_m_trained,
+    )
 
 
 def initialize_length_scale(y):

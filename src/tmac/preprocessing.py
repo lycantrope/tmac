@@ -29,22 +29,22 @@ def interpolate_over_nans(input_mat, t=None):
     """
 
     input_mat = check_input_format(input_mat)
-
+    T, C = input_mat.shape
     # if t is not specified, assume it has been sampled at regular intervals
     if t is None:
-        t = np.arange(input_mat.shape[0])
+        t = np.arange(T)
 
-    output_mat = np.zeros(input_mat.shape)
+    output_mat = np.zeros_like(input_mat)
 
     # calculate the average sample rate and uses this to create an interpolated t
     sample_rate = 1 / np.mean(np.diff(t, axis=0))
     t_interp = np.arange(input_mat.shape[0]) / sample_rate
 
     # loop through each column of the data and interpolate them separately
-    for c in range(input_mat.shape[1]):
+    for c in range(C):
         # check if all the data is nan and skip if it is
-        if np.all(np.isnan(input_mat[:, c])):
-            print("column " + str(c) + " is all NaN, skipping")
+        if np.all(~np.isfinite(input_mat[:, c])):
+            print(f"column {c:d} is all NaN, skipping")
             continue
 
         # find the location of all nan values
