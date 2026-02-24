@@ -5,6 +5,8 @@ import tmac.models as tm
 import tmac.preprocessing as tp
 from tmac.synthetic_data import col_corr, generate_synthetic_data, ratio_model
 
+RNG_SEED = 1337
+
 # set the parameters of the synthetic data
 num_ind = 1000
 num_neurons = 50
@@ -34,6 +36,7 @@ red_bleached, green_bleached, a_true, m_true = generate_synthetic_data(
     frac_nan=frac_nan,
     beta=beta,
     multiplicative=False,
+    rng_seed=RNG_SEED,
 )
 
 # divide out the photobleaching
@@ -64,9 +67,9 @@ length_scale_m_trained = trained_variables["length_scale_m"]
 ratio = ratio_model(red, green, tau_a_true / 2)
 
 # choose which neuron to plot and at what time indicies
-plot_ind = 0
-plot_start = 150
-plot_time = 100
+plot_ind = 25
+plot_start = 0
+plot_time = 1000
 
 fig = plt.figure()
 green_fold_change = green / np.mean(green, axis=0)
@@ -99,7 +102,7 @@ ax.plot(m_trained[plot_start : plot_start + plot_time, plot_ind])
 ax.plot([0, plot_time], [0, 0])
 lims = ax.get_ylim()
 lim_to_use = np.max(np.abs(lims))
-ax.set_ylim(-lim_to_use + 1, lim_to_use + 1)
+ax.set_ylim(-lim_to_use, lim_to_use)
 ax.legend(["m_true", "m_trained"])
 ax.set_xlabel("time")
 ax.set_ylabel("activity")
@@ -119,9 +122,9 @@ ax.set_xticklabels(["ratio", "inference"])
 
 ax = fig.add_subplot(1, 2, 2)
 ax.violinplot(tmac_corelation_squared - ratio_corelation_squared)
-lims = np.array(ax.get_ylim())
+lims = ax.get_ylim()
 lim_to_use = np.max(np.abs(lims))
-ax.set_ylim(-lim_to_use + 1, lim_to_use + 1)
+ax.set_ylim(-lim_to_use, lim_to_use)
 ax.plot([0.5, 1.5], [0, 0], "-k")
 ax.set_xticks([1])
 ax.set_xticklabels(["inference - ratio score"])
