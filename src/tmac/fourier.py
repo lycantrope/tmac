@@ -1,45 +1,60 @@
 from functools import partial
-from typing import Optional
+from typing import Tuple
 
 import jax
 import jax.numpy as jnp
-import jax.scipy as jcp
-import numpy as np
-import torch
 
 
+@partial(jax.jit, static_argnums=(0,))
 def get_fourier_freq(t_max: int):
     """Returns the frequencies for a vector of length t_max"""
     n_cos = jnp.ceil((t_max + 1) / 2)  # number of cosine terms (positive freqs)
     n_sin = jnp.floor((t_max - 1) / 2)  # number of sine terms (negative freqs)
-    w_cos = jnp.arange(0, n_cos)  # cosine freqs
-    w_sin = jnp.arange(-n_sin, 0)  # sine freqs
-    w_vec = jnp.concatenate((w_cos, w_sin), axis=0)
+    w_vec = jnp.arange(t_max)
+    w_vec = jnp.roll(w_vec - n_sin, shift=-n_sin)
     frequencies = 2 * jnp.pi / t_max * w_vec
-
     return frequencies
 
 
-def real_fft(x: jax.Array, n: Optional[int] = None):
-    """Performs a real discrete 1D Fourier transform of the columns of x"""
+@partial(jax.jit, static_argnums=(0,))
+def get_fourier_basis(n_ind: int) -> Tuple[jax.Array, jax.Array]:
+    x = jnp.arange(n_ind)
+    n_cos = jnp.ceil((n_ind + 1) / 2).astype(int)
+    n_sin = jnp.floor((n_ind - 1) / 2).astype(int)
+    # frequency vector
+    frequency_vec = jnp.roll(x - n_sin, shift=-n_sin, axis=0) * 2 * jnp.pi / n_ind
 
-    single_vec = False
-    if len(x.shape) == 1:
-        single_vec = True
+    fourier_basis = frequency_vec[:, None] * x[None, :]
+
+    idx = x[:, None]
+    fourier_basis = jnp.where(
+        idx < n_cos, jnp.cos(fourier_basis), jnp.sin(fourier_basis)
+    )
+    fourier_basis = fourier_basis.at[:].divide(jnp.sqrt(n_ind / 2))
+    fourier_basis = fourier_basis.at[0].divide(jnp.sqrt(2))
+
+    fourier_basis = fourier_basis.at[n_cos - 1].divide(jnp.sqrt(2 - n_ind % 2))
+    return fourier_basis, frequency_vec
+
+
+@jax.jit
+def real_fft(x: jax.Array):
+    """Performs a real discrete 1D Fourier transform of the columns of x"""
+    single_vec = x.ndim == 1
+    if single_vec:
         x = x[:, None]
 
-    if n is None:
-        n = x.shape[0]
+    n = x.shape[0]
 
     x_fft = jnp.fft.fft(x, n, axis=0) / jnp.sqrt(n / 2)
     x_fft = x_fft.at[0].divide(jnp.sqrt(2))
-    if jnp.mod(n, 2) == 0:
-        imx = int(jnp.ceil((n - 1) / 2))
-        x_fft = x_fft.at[imx].divide(jnp.sqrt(2))
+    imx = jnp.ceil((n - 1) // 2).astype(int)
+    x_fft = x_fft.at[imx].divide(jnp.sqrt(2 - n % 2))
 
-    x_hat = x_fft.real
-    isin = int(jnp.ceil((n + 1) / 2))
-    x_hat.at[isin:, :].set(-x_fft[isin:, :].imag)
+    isin = jnp.ceil((n + 1) // 2).astype(int)
+
+    idx = jnp.arange(n)[:, None]
+    x_hat = jnp.where(idx < isin, x_fft.real, -x_fft.imag)
 
     if single_vec:
         x_hat = x_hat[:, 0]
@@ -47,58 +62,41 @@ def real_fft(x: jax.Array, n: Optional[int] = None):
     return x_hat
 
 
-def real_ifft(x_hat: jax.Array, n: Optional[int] = None):
+@jax.jit
+def real_ifft(x_hat: jax.Array):
     """Performs an inverse of a real discrete 1D Fourier transform of the columns of x"""
 
     single_vec = x_hat.ndim == 1
     if single_vec:
         x_hat = x_hat[:, None]
 
-    if n is None:
-        n = x_hat.shape[0]
-
     nxh = x_hat.shape[0]
-    n_cos = int(np.ceil((nxh + 1) / 2))
-    n_sin = int(np.floor((nxh - 1) / 2))
 
     x_hat = x_hat.at[0].multiply(jnp.sqrt(2))
+    imx = jnp.ceil((nxh - 1) // 2).astype(int)
+    x_hat = x_hat.at[imx].multiply(jnp.sqrt(2 - nxh % 2))
 
-    if jnp.mod(nxh, 2) == 0:
-        x_hat.at[n_cos - 1, :].multiply(jnp.sqrt(2))
-
-    sin_basis = jnp.flip(x_hat[1 : n_sin + 1, :], axis=0)
-    sin_basis = sin_basis - 1j * sin_basis
-    cos_basis = x_hat[1 : n_sin + 1, :] + 1j * jnp.flip(x_hat[n_cos:, :], axis=0)
-
-    xfft = jnp.concatenate(
-        [x_hat[:1, :], sin_basis, x_hat[n_sin + 1 : n_cos, :], cos_basis], axis=0
+    n_cos = jnp.ceil((nxh + 1) / 2).astype(int)
+    n_sin = jnp.floor((nxh - 1) / 2).astype(int)
+    x_hat_shift_r = jnp.roll(jnp.flip(x_hat), 1, axis=0)
+    idx = jnp.arange(nxh)[:, None]
+    xfft = jnp.where(
+        idx < n_cos,
+        x_hat + 1.0j * x_hat_shift_r,
+        x_hat_shift_r - 1.0j * x_hat,
     )
-    x = jnp.fft.ifft(xfft, axis=0).real * jnp.sqrt(nxh / 2)
-    x = x[:n, :]
+    xfft = xfft.at[0].set(x_hat[0])
+    nyquist_val = jnp.where(
+        n_cos == n_sin + 1,
+        xfft[n_cos - 1],
+        xfft[n_cos - 1].real + 0.0j,
+    )
+    xfft = xfft.at[n_sin + 1].set(nyquist_val)
+
+    x = jnp.fft.ifft(xfft, axis=0).real
+    x = x[:nxh, :] * jnp.sqrt(nxh / 2)
+
     if single_vec:
         x = x[:, 0]
 
     return x
-
-
-def get_fourier_basis(n_ind):
-    """Returns an orthonormal real Fourier basis for a vector of length n_ind"""
-
-    n_cos = jnp.ceil((n_ind + 1) / 2)
-    n_sin = jnp.floor((n_ind - 1) / 2)
-
-    cos_freq = 2 * jnp.pi / n_ind * jnp.arange(n_cos)
-    sin_freq = 2 * jnp.pi / n_ind * jnp.arange(-n_sin, 0)
-    frequency_vec = np.concatenate((cos_freq, sin_freq), axis=0)  # frequency vector
-
-    x = jnp.arange(n_ind)
-    cos_basis = jnp.cos(cos_freq[:, None] * x[None, :]) / jnp.sqrt(n_ind / 2)
-    sin_basis = jnp.sin(sin_freq[:, None] * x[None, :]) / jnp.sqrt(n_ind / 2)
-    fourier_basis = jnp.concatenate((cos_basis, sin_basis), axis=0)
-
-    fourier_basis = fourier_basis.at[0].divide(jnp.sqrt(2))
-
-    if jnp.mod(n_ind, 2) == 0:
-        fourier_basis = fourier_basis.at[int(n_cos - 1)].divide(jnp.sqrt(2))
-
-    return fourier_basis, frequency_vec
