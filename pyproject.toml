@@ -4,10 +4,12 @@ version = "0.1.0"
 description = "Two-channel motion artifact correction"
 authors = [
     { name = "Matthew S. Creamer", email = "matthew.s.creamer@gmail.com" },
+    { name = "Chung-Kuan CHEN", email = "b97b01045@gmail.com" },
+
 ]
 readme = "README.md"
 classifiers = ["Programming Language :: Python :: 3"]
-dependencies = ["numpy", "scipy", "torch"]
+dependencies = ["jaxopt", "numpy"]
 keywords = [
     "python",
     "calcium",
@@ -31,12 +33,11 @@ cuda = ["jax[cuda13]"]
 
 
 [dependency-groups]
-dev = [
-    "ipykernel>=7.2.0",
-    "matplotlib>=3.10.8",
-    "ruff>=0.15.2",
-]
+dev = ["ipykernel>=7.2.0", "matplotlib>=3.10.8", "ruff>=0.15.2"]
 cpu = ["jax"]
 
 [tool.uv]
 default-groups = ["dev", "cpu"]
+
+[tool.ruff.lint]
+select = ["I"]

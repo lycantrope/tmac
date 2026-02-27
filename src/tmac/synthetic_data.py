@@ -1,8 +1,7 @@
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax import random
-from scipy import signal, stats
+from jax.scipy import signal as jsignal, stats as jstats
 
 import tmac.fourier as tfo
 
@@ -51,7 +50,7 @@ def generate_synthetic_data(
         m: motion artifact Gaussian process
     """
     key = random.key(jnp.array(rng_seed))
-    key, *subkeys = random.split(key, num=6)
+    subkeys = random.split(key, num=5)
     fourier_basis, frequency_vec = tfo.get_fourier_basis(num_ind)
 
     # get the diagonal of radial basis kernel in fourier space
@@ -109,32 +108,39 @@ def generate_synthetic_data(
     return red_bleached, green_bleached, a, m
 
 
+@jax.jit
 def col_corr(a_true, a_hat):
-    """Calculate pearson correlation coefficient between each column of a_true and a_hat"""
-    corr = jnp.zeros(a_true.shape[1])
+    """Computes Pearson correlation for each column between two matrices. Assumes shapes are (rows, cols)."""
 
-    for c in range(a_true.shape[1]):
-        true_vec = a_true[:, c] - jnp.mean(a_true[:, c])
-        hat_vec = a_hat[:, c] - jnp.mean(a_hat[:, c])
-        corr.at[c].set(
-            jnp.mean(true_vec * hat_vec) / jnp.std(true_vec) / jnp.std(hat_vec)
-        )
+    def compute_corr(true_col, hat_col):
+        # Subtract mean (center the data)
+        true_vec = true_col - jnp.mean(true_col)
+        hat_vec = hat_col - jnp.mean(hat_col)
 
-    return corr
+        # Calculate correlation: E[x*y] / (std(x) * std(y))
+        numerator = jnp.mean(true_vec * hat_vec)
+        denominator = jnp.std(true_vec) * jnp.std(hat_vec)
+        return jnp.where(denominator > 1e-12, numerator / denominator, 0.0)
+
+    # vmap over the second axis (columns) of both matrices
+    # in_axes=(1, 1) means "map over axis 1 of the 1st and 2nd arguments"
+    vmapped_corr = jax.vmap(compute_corr, in_axes=(1, 1))
+
+    return vmapped_corr(a_true, a_hat)
 
 
 def ratio_model(red, green, tau):
     # calculate the prediction from the ratio model
     # assumes red
-    red = red / np.mean(red, axis=0)
-    green = green / np.mean(green, axis=0)
+    red = red / jnp.mean(red, axis=0)
+    green = green / jnp.mean(green, axis=0)
 
     num_std = 3
-    num_filter_ind = np.round(tau * num_std) * 2 + 1
-    filter_x = np.arange(num_filter_ind) - (num_filter_ind - 1) / 2
-    filter_shape = stats.norm.pdf(filter_x / tau) / tau
-    green_filtered = signal.convolve2d(green, filter_shape[:, None], "same")
-    red_filtered = signal.convolve2d(red, filter_shape[:, None], "same")
+    num_filter_ind = jnp.round(tau * num_std) * 2 + 1
+    filter_x = jnp.arange(num_filter_ind) - (num_filter_ind - 1) / 2
+    filter_shape = jstats.norm.pdf(filter_x / tau) / tau
+    green_filtered = jsignal.convolve2d(green, filter_shape[:, None], "same")
+    red_filtered = jsignal.convolve2d(red, filter_shape[:, None], "same")
     ratio = green_filtered / red_filtered - 1
 
     return ratio

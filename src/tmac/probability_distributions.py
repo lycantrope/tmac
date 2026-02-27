@@ -3,11 +3,21 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import numpy as np
-import torch
 
 import tmac.fourier as tfo
 
 
+@jax.jit
+def covariance_fft(variance, scale, freq, cutoff):
+    return (
+        np.sqrt(2 * np.pi)
+        * variance
+        * scale
+        * jnp.maximum(jnp.exp(-0.5 * (scale * freq) ** 2), cutoff)
+    )
+
+
+@partial(jax.jit, static_argnames=("threshold", "truncate_freq"))
 def tmac_evidence(
     r,
     fourier_r,
@@ -19,7 +29,6 @@ def tmac_evidence(
     log_tau_a,
     log_variance_m,
     log_tau_m,
-    freq,
     threshold=1e8,
     truncate_freq=True,
 ):
@@ -40,10 +49,8 @@ def tmac_evidence(
         calculate_posterior: boolean, whether to calculate the posterior
         truncate_freq: boolean, if true truncates low amplitude frequencies in Fourier domain. This should give the same
             results but may give sensitivity to the initial conditions
-    if calculate_posterior:
-        Returns: a_hat, m_hat
-    else:
-        Returns: log probability of the evidence
+
+    Returns: log probability of the evidence
     """
 
     # exponentiate the log variances and invert the noise variances
@@ -56,32 +63,24 @@ def tmac_evidence(
 
     variance_r_noise_inv = 1 / variance_r_noise
     variance_g_noise_inv = 1 / variance_g_noise
-    dtype = r.dtype
+
     # smallest length scale (longest in fourier space)
     min_length = jnp.array((length_scale_a, length_scale_m)).min()
     t_max = r.shape[0]
 
+    freq = tfo.get_fourier_freq(t_max)
+
     if truncate_freq:
         max_freq = 2 * jnp.log(threshold) / min_length**2
-        mask = (freq**2 < max_freq).astype(freq.dtype)
+        mask = jnp.array(freq**2 < max_freq)
     else:
-        mask = jnp.ones_like(freq)
+        mask = jnp.ones_like(freq) > 0
 
-    cutoff = jnp.array(1 / threshold, dtype=dtype)
+    cutoff = float(1 / threshold)
 
     # compute the diagonals of the covariances in fourier space
-    covariance_a_fft = jnp.maximum(
-        jnp.exp(-0.5 * freq**2 * length_scale_a**2) * mask, cutoff
-    )
-    covariance_a_fft = (
-        variance_a * (length_scale_a * np.sqrt(2 * np.pi)) * covariance_a_fft
-    )
-    covariance_m_fft = jnp.maximum(
-        jnp.exp(-0.5 * freq**2 * length_scale_m**2) * mask, cutoff
-    )
-    covariance_m_fft = (
-        variance_m * (length_scale_m * np.sqrt(2 * np.pi)) * covariance_m_fft
-    )
+    covariance_a_fft = covariance_fft(variance_a, length_scale_a, freq, cutoff)
+    covariance_m_fft = covariance_fft(variance_m, length_scale_m, freq, cutoff)
 
     f11 = 1 / covariance_a_fft + variance_g_noise_inv
     f22 = 1 / covariance_m_fft + variance_r_noise_inv + variance_g_noise_inv
@@ -95,25 +94,27 @@ def tmac_evidence(
     f22_inv = 1 / f22 + f12**2 / f22**2 / k
     f12_inv = -f12 / f22 / k
 
+    # we filter out the truncate sequence.
     log_det_term = -(
-        jnp.log(f_det).sum()
-        + jnp.log(covariance_a_fft * covariance_m_fft).sum()
+        jnp.where(mask, jnp.log(f_det), 0.0).sum()
+        + jnp.where(mask, jnp.log(covariance_a_fft * covariance_m_fft), 0.0).sum()
         + t_max * jnp.log(variance_g_noise * variance_r_noise)
     )
 
     # compute the quadratic term
+    fourier_r_trimmed = jnp.where(mask, fourier_r, 0.0)
+    fourier_g_trimmed = jnp.where(mask, fourier_g, 0.0)
 
     auto_corr_term = (variance_r_noise_inv * r**2 + variance_g_noise_inv * g**2).sum()
-
-    normalized_r_fft = variance_r_noise_inv * fourier_r
-    normalized_g_fft = variance_g_noise_inv * fourier_g
+    normalized_r_fft = variance_r_noise_inv * fourier_r_trimmed
+    normalized_g_fft = variance_g_noise_inv * fourier_g_trimmed
 
     f_quad_mult_1 = normalized_g_fft
-    f_quad_mult_2 = normalized_r_fft + normalized_g_fft
+    f_quad_mult_2 = normalized_r_fft + normalized_g_fft  # type: ignore
 
     f_quad = (
-        (f11_inv * f_quad_mult_1**2).sum()
-        + (f22_inv * f_quad_mult_2**2).sum()
+        (f11_inv * f_quad_mult_1**2).sum()  # type: ignore
+        + (f22_inv * f_quad_mult_2**2).sum()  # type: ignore
         + 2 * (f12_inv * f_quad_mult_1 * f_quad_mult_2).sum()
     )
 
@@ -122,6 +123,7 @@ def tmac_evidence(
     return jnp.mean(log_det_term + quad_term)
 
 
+@partial(jax.jit, static_argnames=("threshold", "truncate_freq"))
 def tmac_posterior(
     r,
     fourier_r,
@@ -153,10 +155,7 @@ def tmac_posterior(
         calculate_posterior: boolean, whether to calculate the posterior
         truncate_freq: boolean, if true truncates low amplitude frequencies in Fourier domain. This should give the same
             results but may give sensitivity to the initial conditions
-    if calculate_posterior:
-        Returns: a_hat, m_hat
-    else:
-        Returns: log probability of the evidence
+    Returns: a_hat, m_hat
     """
 
     # exponentiate the log variances and invert the noise variances
@@ -167,37 +166,27 @@ def tmac_posterior(
     variance_m = jnp.exp(log_variance_m)
     length_scale_m = jnp.exp(log_tau_m)
 
-    variance_r_noise_inv = 1 / variance_r_noise
-    variance_g_noise_inv = 1 / variance_g_noise
-
-    device = r.device
-    dtype = r.dtype
+    variance_r_noise_inv = 1.0 / variance_r_noise
+    variance_g_noise_inv = 1.0 / variance_g_noise
 
     # calculate the gaussian process components in fourier space
     t_max = r.shape[0]
 
-    all_freq = tfo.get_fourier_freq(t_max)
+    freq = tfo.get_fourier_freq(t_max)
     # smallest length scale (longest in fourier space)
     min_length = jnp.array((length_scale_a, length_scale_m)).min()
 
     if truncate_freq:
-        max_freq = 2 * jnp.log(threshold) / min_length**2
-        frequencies_to_keep = all_freq**2 < max_freq
+        max_freq = 2 * np.log(threshold) / min_length**2
+        frequencies_to_keep = freq**2 < max_freq
     else:
-        frequencies_to_keep = jnp.full(all_freq.shape, True)
+        frequencies_to_keep = jnp.full(freq.shape, True)
 
-    freq = all_freq[frequencies_to_keep]
-    cutoff = jnp.array(1 / threshold, device=device, dtype=dtype)
+    cutoff = float(1.0 / threshold)
 
     # compute the diagonals of the covariances in fourier space
-    covariance_a_fft = jnp.maximum(jnp.exp(-0.5 * freq**2 * length_scale_a**2), cutoff)
-    covariance_a_fft = (
-        variance_a * (length_scale_a * jnp.sqrt(2 * jnp.pi)) * covariance_a_fft
-    )
-    covariance_m_fft = jnp.maximum(jnp.exp(-0.5 * freq**2 * length_scale_m**2), cutoff)
-    covariance_m_fft = (
-        variance_m * (length_scale_m * np.sqrt(2 * np.pi)) * covariance_m_fft
-    )
+    covariance_a_fft = covariance_fft(variance_a, length_scale_a, freq, cutoff)
+    covariance_m_fft = covariance_fft(variance_m, length_scale_m, freq, cutoff)
 
     f11 = 1 / covariance_a_fft + variance_g_noise_inv
     f22 = 1 / covariance_m_fft + variance_r_noise_inv + variance_g_noise_inv
@@ -210,11 +199,8 @@ def tmac_posterior(
     f12_inv = -f12 / f22 / k
 
     # compute the quadratic term
-    fourier_r_trimmed = fourier_r[frequencies_to_keep]
-    fourier_g_trimmed = fourier_g[frequencies_to_keep]
-
-    normalized_r_fft = variance_r_noise_inv * fourier_r_trimmed
-    normalized_g_fft = variance_g_noise_inv * fourier_g_trimmed
+    normalized_r_fft = variance_r_noise_inv * fourier_r
+    normalized_g_fft = variance_g_noise_inv * fourier_g
 
     f_quad_mult_1 = normalized_g_fft
     f_quad_mult_2 = normalized_r_fft + normalized_g_fft
@@ -222,13 +208,7 @@ def tmac_posterior(
     a_fft = f11_inv * f_quad_mult_1 + f12_inv * f_quad_mult_2
     m_fft = f22_inv * f_quad_mult_2 + f12_inv * f_quad_mult_1
 
-    m_padded = jnp.zeros_like(r, device=device, dtype=dtype)
-    a_padded = jnp.zeros_like(r, device=device, dtype=dtype)
+    a_padded = jnp.where(frequencies_to_keep, a_fft, 0.0 + 0.0j)
+    m_padded = jnp.where(frequencies_to_keep, m_fft, 0.0 + 0.0j)
 
-    m_padded.at[frequencies_to_keep].set(m_fft)
-    a_padded.at[frequencies_to_keep].set(a_fft)
-
-    m_hat = tfo.real_ifft(m_padded)
-    a_hat = tfo.real_ifft(a_padded)
-
-    return a_hat + 1, m_hat
+    return jnp.stack([tfo.real_ifft(a_padded) + 1, tfo.real_ifft(m_padded)])

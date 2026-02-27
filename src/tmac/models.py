@@ -1,27 +1,22 @@
-import time
 from functools import partial
+from typing import Tuple
 
 import jax
 import jax.numpy as jnp
-import jax.scipy as jsp
-import numpy as np
-import torch
-from jax.scipy import optimize
+from jax.scipy import optimize as joptimize, stats as jstats
+import jaxopt
 
-# from scipy import optimize
 import tmac.fourier as tfo
-import tmac.optimization as opt
 import tmac.preprocessing as pp
 import tmac.probability_distributions as tpd
 
 
+@partial(jax.jit, static_argnames=("truncate_freq"))
 def tmac_ac(
     red_np,
     green_np,
-    optimizer="BFGS",
-    verbose=False,
     truncate_freq=True,
-):
+) -> Tuple[jax.Array, jax.Array, jax.Array]:
     """Implementation of the Two-channel motion artifact correction method (TMAC)
 
     This is tmac_ac because it is the additive and circular boundary version
@@ -31,168 +26,118 @@ def tmac_ac(
     Args:
         red_np: numpy array, [time, neurons], activity independent channel
         green_np: numpy array, [time, neurons], activity dependent channel
-        optimizer: string, scipy optimizer
-        verbose: boolean, if true, outputs when inference is complete on each neuron and estimates time to finish
         truncate_freq: boolean, if true truncates low amplitude frequencies in Fourier domain. This should give the same
             results but may give sensitivity to the initial conditions
 
-    Returns: a dictionary containing: all the inferred parameters of the model
+    Returns: a_trained, m_trained, trained_params
     """
 
     # optimization is performed using Scipy optimize, so all tensors should stay on the CPU
 
+    # assert np.all(np.isfinite(red_np)) & np.all(
+    #     np.isfinite(green_np)
+    # ), "Input data cannot have any nan or inf"
+    # assert (
+    #     red_np.shape == green_np.shape
+    # ), "red and green matricies must be the same shape"
+
     red = pp.check_input_format(red_np)
     green = pp.check_input_format(green_np)
-
-    assert jnp.all(jnp.isfinite(red)) and jnp.all(
-        jnp.isfinite(green)
-    ), "Input data cannot have any nan or inf"
-    assert red.shape == green.shape, "red and green matricies must be the same shape"
-
+    dtype = red.dtype
     T, C = red.shape
     # convert data to units of fold mean and subtract mean
     mean_red = jnp.mean(red, axis=0)
     mean_green = jnp.mean(green, axis=0)
-    red.at[::].divide(mean_red)
-    red.at[::].subtract(1)
-    green.at[::].divide(mean_green)
-    green.at[::].subtract(1)
+    red = (red / mean_red) - 1.0
+    green = (green / mean_green) - 1.0
 
     # convert to tensors and fourier transform
     red_fft = tfo.real_fft(red)
     green_fft = tfo.real_fft(green)
 
-    # estimate all model parameters from the data
-    variance_r_noise_init = jnp.var(red, axis=0)
-    variance_g_noise_init = jnp.var(green, axis=0)
-    variance_a_init = jnp.var(green, axis=0)
-    variance_m_init = jnp.var(red, axis=0)
+    # Parameters per neurons
+    init_parameters = jnp.stack(
+        [
+            jnp.var(red, axis=0),  # var_r_noise
+            jnp.var(green, axis=0),  # var_g_noise
+            jnp.var(green, axis=0),  # var_a
+            jnp.ones(C, dtype=dtype),  # scale_a
+            jnp.var(red, axis=0),  # var_m,
+            jnp.ones(C, dtype=dtype),  # scale_m,
+        ],
+        axis=0,
+    )
 
-    # initialize length scale
-    length_scale_a_init = jnp.ones(C)
-    length_scale_m_init = jnp.ones(C)
-
-    # preallocate space for all the training variables
-    a_trained = jnp.zeros((T, C))
-    m_trained = jnp.zeros((T, C))
-
-    variance_r_noise_trained = jnp.zeros(C)
-    variance_g_noise_trained = jnp.zeros(C)
-    variance_a_trained = jnp.zeros(C)
-    length_scale_a_trained = jnp.zeros(C)
-    variance_m_trained = jnp.zeros(C)
-    length_scale_m_trained = jnp.zeros(C)
-
-    # loop through each neuron and perform inference
-    start = time.time()
-    freq = tfo.get_fourier_freq(T)
-
-    for n in range(C):
-        # get the initial values for the hyperparameters of this neuron
-        # All hyperparameters are positive, so we fit them in log space
-        evidence_training_variables = jnp.log(
-            jnp.array(
-                [
-                    variance_r_noise_init[n],
-                    variance_g_noise_init[n],
-                    variance_a_init[n],
-                    length_scale_a_init[n],
-                    variance_m_init[n],
-                    length_scale_m_init[n],
-                ]
-            )
-        )
-
-        # define the evidence loss function. This function takes in and returns pytorch tensors
-        def evidence_loss_fn(
-            training_variables,
+    # define the evidence loss function. This function takes in and returns pytorch tensors
+    def evidence_loss_fn(
+        training_variables,
+        red,
+        red_fft,
+        green,
+        green_fft,
+    ):
+        return -tpd.tmac_evidence(
             red,
             red_fft,
+            training_variables[0],
             green,
             green_fft,
-            freq,
-        ):
-            return -tpd.tmac_evidence(
-                red,
-                red_fft,
-                training_variables[0],
-                green,
-                green_fft,
-                training_variables[1],
-                training_variables[2],
-                training_variables[3],
-                training_variables[4],
-                training_variables[5],
-                freq=freq,
-                truncate_freq=truncate_freq,
-            )
-
-        trained_variances = optimize.minimize(
-            evidence_loss_fn,
-            evidence_training_variables,
-            args=(red[:, n], red_fft[:, n], green[:, n], green_fft[:, n], freq),
-            method=optimizer,
-        )
-
-        # calculate the posterior values
-        # The posterior is gaussian so we don't need to optimize, we find a and m in one step
-        a, m = tpd.tmac_posterior(
-            red[:, n],
-            red_fft[:, n],
-            trained_variances.x[0],
-            green[:, n],
-            green_fft[:, n],
-            trained_variances.x[1],
-            trained_variances.x[2],
-            trained_variances.x[3],
-            trained_variances.x[4],
-            trained_variances.x[5],
+            training_variables[1],
+            training_variables[2],
+            training_variables[3],
+            training_variables[4],
+            training_variables[5],
             truncate_freq=truncate_freq,
         )
 
-        a_trained.at[:, n].set(a)
-        m_trained.at[:, n].set(m)
-        variance_r_noise_trained.at[n].set(jnp.exp(trained_variances.x[0]))
-        variance_g_noise_trained.at[n].set(jnp.exp(trained_variances.x[1]))
-        variance_a_trained.at[n].set(jnp.exp(trained_variances.x[2]))
-        length_scale_a_trained.at[n].set(jnp.exp(trained_variances.x[3]))
-        variance_m_trained.at[n].set(jnp.exp(trained_variances.x[4]))
-        length_scale_m_trained.at[n].set(jnp.exp(trained_variances.x[5]))
+    @partial(jax.vmap, in_axes=1, out_axes=1)
+    def _tmac_estimate_all(init_variances, r, r_fft, g, g_fft):
+        trained_variances = joptimize.minimize(
+            evidence_loss_fn,
+            jnp.log(init_variances),
+            args=(r, r_fft, g, g_fft),
+            method="BFGS",
+        )
+        return jnp.exp(trained_variances.x)
 
-        if verbose:
-            decimals = 1e3
-            # print out timing
-            elapsed = time.time() - start
-            remaining = elapsed / (n + 1) * (red.shape[1] - (n + 1))
-            elapsed_truncated = np.round(elapsed * decimals) / decimals
-            remaining_truncated = np.round(remaining * decimals) / decimals
-            print(str(n + 1) + "/" + str(red.shape[1]) + " neurons complete")
-            print(
-                str(elapsed_truncated)
-                + "s elapsed, estimated "
-                + str(remaining_truncated)
-                + "s remaining"
-            )
+    # loop through each neuron and perform inference
 
-    trained_variables = {
-        "a": a_trained,
-        "m": m_trained,
-        "variance_r_noise": variance_r_noise_trained,
-        "variance_g_noise": variance_g_noise_trained,
-        "variance_a": variance_a_trained,
-        "length_scale_a": length_scale_a_trained,
-        "variance_m": variance_m_trained,
-        "length_scale_m": length_scale_m_trained,
-    }
+    # calculate the posterior values
+    # The posterior is gaussian so we don't need to optimize, we find a and m in one step
+    @partial(jax.vmap, in_axes=1, out_axes=-1)
+    def _tmac_posterior_all(trained_variances, r, r_fft, g, g_fft):
+        trained_variances = jnp.log(trained_variances)
+        return tpd.tmac_posterior(
+            r,
+            r_fft,
+            trained_variances[0],
+            g,
+            g_fft,
+            trained_variances[1],
+            trained_variances[2],
+            trained_variances[3],
+            trained_variances[4],
+            trained_variances[5],
+            truncate_freq=truncate_freq,
+        )
 
-    return trained_variables
+    trained_params = _tmac_estimate_all(init_parameters, red, red_fft, green, green_fft)
+    a_trained, m_trained = _tmac_posterior_all(
+        trained_params, red, red_fft, green, green_fft
+    )
+    return (
+        a_trained,
+        m_trained,
+        trained_params,
+    )
 
 
+@jax.jit
 def initialize_length_scale(y: jax.Array):
     """Function to fit a Gaussian to the autocorrelation of y
 
     Args:
-        y: numpy vector
+        y: jax vector
 
     Returns: Standard deviation of a Gaussian fit to the autocorrelation of y
     """
@@ -201,14 +146,24 @@ def initialize_length_scale(y: jax.Array):
     y_z_score = (y - jnp.mean(y)) / jnp.std(y)
     y_corr = jnp.correlate(y_z_score, y_z_score, mode="same")
 
-    # fit the std of a gaussian to the correlation function
-    @partial(jax.jit)
-    def fit_to_gaussian(p: jax.Array):
-        return p[0] * jsp.stats.norm.pdf(x, 0, p[1]) - y_corr
-
     p_init = jnp.array((jnp.max(y_corr), 1.0))
 
-    p_hat = optimize.minimize(fit_to_gaussian, p_init, method="BFGS")[0]
+    def gaussian_residuals(p, x, y_corr):
+        """
+        p[0]: Amplitude (Scale)
+        p[1]: Standard Deviation (Sigma)
+        """
+        # Using jax.scipy.stats ensures Autograd can calculate the derivative
+        amplitude = p[0]
+        sigma = jnp.abs(p[1]) + 1e-6
+        prediction = amplitude * jstats.norm.pdf(x, loc=0, scale=sigma)
+        return prediction - y_corr
 
-    # return the standard deviation
-    return p_hat[1]
+    # 1. Initialize the solver
+    lm = jaxopt.LevenbergMarquardt(residual_fun=gaussian_residuals)
+
+    # 2. Run the optimization
+    # JAX will compile the math, the gradients, and the solver logic into one kernel
+    p_hat = lm.run(p_init, x=x, y_corr=y_corr)
+
+    return p_hat.params[1]
