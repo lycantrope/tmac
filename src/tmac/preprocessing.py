@@ -98,9 +98,15 @@ def photobleach_correction(time_by_neurons: Union[np.ndarray, jax.Array]) -> jax
 
     def loss_fn(p, t, time_by_neurons, isfinite):
         exponential_approx = p[None, 1:] * jnp.exp(-t[:, None] / p[0])
-        squared_error = (exponential_approx - time_by_neurons) ** 2
         # set unmeasured values to 0, so they don't show up in the sum
-        squared_error = jnp.where(isfinite, squared_error, 0.0)
+        squared_error = (
+            exponential_approx
+            - jnp.where(
+                isfinite,
+                time_by_neurons,
+                exponential_approx,
+            )
+        ) ** 2
         return squared_error.sum()  # type: ignore
 
     p_hat = joptimize.minimize(
@@ -109,9 +115,8 @@ def photobleach_correction(time_by_neurons: Union[np.ndarray, jax.Array]) -> jax
         args=(t, time_by_neurons, isfinite),
         method="BFGS",
     )
-
     time_by_neurons_corrected = time_by_neurons / jnp.exp(-t[:, None] / p_hat.x[0])
     # put the unmeasured value nans back in
-    time_by_neurons_corrected = jnp.where(~isfinite, jnp.nan, time_by_neurons_corrected)
+    time_by_neurons_corrected = jnp.where(isfinite, time_by_neurons_corrected, jnp.nan)
 
     return time_by_neurons_corrected

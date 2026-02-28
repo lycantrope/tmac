@@ -99,13 +99,14 @@ def generate_synthetic_data(
 
     # add photobleaching
     photo_tau = num_ind / 3
-    red_bleached = red_true * jnp.exp(-jnp.arange(num_ind)[:, None] / photo_tau)
-    green_bleached = green_true * jnp.exp(-jnp.arange(num_ind)[:, None] / photo_tau)
+    decay = jnp.exp(-jnp.arange(num_ind)[:, None] / photo_tau)
+    red_bleached = red_true * decay
+    green_bleached = green_true * decay
 
     # nan a few values
-    ind_to_nan = random.uniform(subkeys[4], shape=(num_ind,)) <= frac_nan
-    red_bleached.at[ind_to_nan, :].set(jnp.nan)
-    green_bleached.at[ind_to_nan, :].set(jnp.nan)
+    ind_to_nan = random.uniform(subkeys[4], shape=(num_ind,)) > frac_nan
+    red_bleached = jnp.where(ind_to_nan[:, None], red_bleached, jnp.nan)
+    green_bleached = jnp.where(ind_to_nan[:, None], green_bleached, jnp.nan)
 
     return red_bleached, green_bleached, a, m
 
