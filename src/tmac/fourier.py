@@ -54,7 +54,7 @@ def real_fft(x: jax.Array) -> jax.Array:
 
     x_fft = jnp.fft.fft(x, n, axis=0) / np.sqrt(n / 2)
     x_fft = x_fft.at[0].divide(np.sqrt(2))
-    x_fft = x_fft.at[n_sin].divide(np.sqrt(2 - n % 2))
+    x_fft = x_fft.at[n_sin + 1].divide(np.sqrt(2 - n % 2))
 
     idx = jnp.arange(n)[:, None]
     x_hat = jnp.where(idx < n_cos, x_fft.real, -x_fft.imag)
@@ -78,7 +78,7 @@ def real_ifft(x_hat: jax.Array) -> jax.Array:
     n_cos = nxh - n_sin
 
     x_hat = x_hat.at[0].multiply(np.sqrt(2))
-    x_hat = x_hat.at[n_sin].multiply(np.sqrt(2 - nxh % 2))
+    x_hat = x_hat.at[n_sin + 1].multiply(np.sqrt(2 - nxh % 2))
 
     x_hat_shift_r = jnp.roll(jnp.flip(x_hat), 1, axis=0)
     idx = jnp.arange(nxh)[:, None]
