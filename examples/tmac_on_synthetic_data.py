@@ -1,6 +1,9 @@
 import time
+from pathlib import Path
 
+import h5py
 import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -12,7 +15,7 @@ from tmac.synthetic_data import col_corr, generate_synthetic_data, ratio_model
 t0 = time.time()
 
 # set the parameters of the synthetic data
-num_ind = 20000
+num_ind = 1000
 num_neurons = 50
 mean_r = 20
 mean_g = 30
@@ -25,22 +28,35 @@ tau_m_true = 3
 frac_nan = 0.05
 beta = 20
 
-# generate synthetic data
-red_bleached, green_bleached, a_true, m_true = generate_synthetic_data(
-    num_ind,
-    num_neurons,
-    mean_r,
-    mean_g,
-    variance_noise_r_true,
-    variance_noise_g_true,
-    variance_a_true,
-    variance_m_true,
-    tau_a_true,
-    tau_m_true,
-    frac_nan=frac_nan,
-    beta=beta,
-    multiplicative=False,
-)
+if not Path("temp.h5").is_file():
+    # generate synthetic data
+    red_bleached, green_bleached, a_true, m_true = generate_synthetic_data(
+        num_ind,
+        num_neurons,
+        mean_r,
+        mean_g,
+        variance_noise_r_true,
+        variance_noise_g_true,
+        variance_a_true,
+        variance_m_true,
+        tau_a_true,
+        tau_m_true,
+        frac_nan=frac_nan,
+        beta=beta,
+        multiplicative=False,
+    )
+    with h5py.File("temp.h5", "w") as handler:
+        handler.create_dataset("red_bleached", data=red_bleached)
+        handler.create_dataset("green_bleached", data=green_bleached)
+        handler.create_dataset("a_true", data=a_true)
+        handler.create_dataset("m_true", data=m_true)
+else:
+    with h5py.File("temp.h5", "r") as handler:
+        red_bleached = handler["red_bleached"][...]
+        green_bleached = handler["green_bleached"][...]
+        a_true = handler["a_true"][...]
+        m_true = handler["m_true"][...]
+
 t1 = time.time()
 print(t1 - t0)
 t0 = t1
@@ -49,6 +65,8 @@ t0 = t1
 
 # %% [markdown]
 ## Preprocessing
+red_bleached = jnp.array(red_bleached)
+green_bleached = jnp.array(green_bleached)
 
 # divide out the photobleaching
 red = tp.photobleach_correction(red_bleached)
@@ -59,7 +77,6 @@ t0 = t1
 # get rid of nans via linear interpolation
 red = tp.interpolate_over_nans(red)
 green = tp.interpolate_over_nans(green)
-
 
 t1 = time.time()
 print(t1 - t0)

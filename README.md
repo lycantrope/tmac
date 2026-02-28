@@ -1,6 +1,6 @@
 ## Two-channel motion artifact correction (TMAC)
 ### General description:
-**This fork optimizes the Two-channel Motion Artifact Correction with Jax library.**
+This fork optimizes the Two-channel Motion Artifact Correction with Jax library.
 
 For a full description please consult the paper:
 https://doi.org/10.1371/journal.pcbi.1010421
@@ -16,12 +16,12 @@ the same motion artifact component. TMAC could therefore be applied to a wide ra
 
 ### Benchmark
 
-| Framework       | Sample Size | Data Sync | Preprocess | tmac |
-|-----------------|-------------|------------|------------|------|
-| SciPy+Torch     | 1,000 × 50  | 0.03       | 0.14       | 5.07 |
-| SciPy+Torch     | 20,000 × 50 | 8.03       | 2.8        | 24.6 |
-| Jax (this fork) | 1,000 × 50  | 1.51       | 0.74       | 2.77 |
-| Jax (this fork) | 20,000 × 50 | 3.4        | 0.9        | 4.08 |
+| Framework           | Sample Size | Data Sync | Preprocess | tmac |
+|---------------------|-------------|-----------|------------|------|
+| SciPy+Torch         | 1,000 × 50  | 0.03      | 0.14       | 5.07 |
+| SciPy+Torch         | 20,000 × 50 | 8.03      | 2.8        | 24.6 |
+| Jax-x66 (this fork) | 1,000 × 50  | 1.56      | 0.74       | 3.20 |
+| Jax-x66 (this fork) | 20,000 × 50 | 3.7       | 0.9        | 4.08 |
 
 
 ### Installation:
