@@ -1,14 +1,7 @@
 ## Two-channel motion artifact correction (TMAC)
-
-### Installation:
-Navigate to the python project directory
-```
-git clone https://github.com/Nondairy-Creamer/tmac
-cd tmac
-pip install -e .
-```
-
 ### General description:
+**This fork optimizes the Two-channel Motion Artifact Correction with Jax library.**
+
 For a full description please consult the paper:
 https://doi.org/10.1371/journal.pcbi.1010421
 
@@ -21,12 +14,34 @@ Below we refer to the activity-depdendent channel as the "green channel" and the
 Importantly, TMAC will remove motion artifacts in any type of two-channel imaging, so long as one channel is activity-independent and both channels share
 the same motion artifact component. TMAC could therefore be applied to a wide range of two-channel imaging modalities including for voltage imaging, fiber photometry when using an isosbestic wavelength, or two-channel two-photon imaging.
 
+### Benchmark
+
+| Framework       | Sample Size | Data Sync | Preprocess | tmac |
+|-----------------|-------------|------------|------------|------|
+| SciPy+Torch     | 1,000 × 50  | 0.03       | 0.14       | 5.07 |
+| SciPy+Torch     | 20,000 × 50 | 8.03       | 2.8        | 24.6 |
+| Jax (this fork) | 1,000 × 50  | 1.51       | 0.74       | 2.77 |
+| Jax (this fork) | 20,000 × 50 | 3.4        | 0.9        | 4.08 |
+
+
+### Installation:
+- uv
+```sh
+uv add git+https://github.com/lycantrope/tmac
+```
+- pip
+```sh
+pip install git+https://github.com/lycantrope/tmac
+```
+
+
+
 ### Usage:
 To see an example on synthetic data, install the package into a python project, then run the script examples/tmac_on_synthetic_data.py
 
 The model can be called in a python project with the following commands, where red and green are numpy matricies of the red and green fluorescence data with dimensions [time, neurons].
 
-```
+```python
 import tmac.models as tm
 
 trained_variables = tm.tmac_ac(red, green)
@@ -34,7 +49,7 @@ trained_variables = tm.tmac_ac(red, green)
 
 Also included are two preprocessing functions. A function to linearly interpolate over time to remove NaNs from the data and one to correct for photobleaching by dividing by an exponential with a single decay constant fit with all the neural data. TMAC assumes a constant mean and no NaNs, so adjustments like this are necessary preprocessing steps, though any method for data imputation and bleach correction will suffice. Using the preprocessing steps:
 
-```
+```python
 import tmac.models as tm
 import tmac.preprocessing as tp
 
@@ -63,7 +78,7 @@ The output dictionary contains
 * The photobleach correction provided shares a bleaching tau across neurons, so is not independent across neurons.
 * Do not temporally filter the data. The Gaussian process prior over a and m will perform the necessary smoothing without reducing temporal resolution.
 * The activity a has mean 1 and units of fold change from the mean. If you want it to be unitful, you can multiply each neuron's activity by the mean over time of the green channel input i.e. 
-```
+```python
 a_unitful = a * np.mean(green_corrected, axis=0, keepdims=True)
 ```
 

@@ -1,12 +1,18 @@
+import time
+
+import jax
 import matplotlib.pyplot as plt
 import numpy as np
 
+jax.config.update("jax_enable_x64", True)
 import tmac.models as tm
 import tmac.preprocessing as tp
 from tmac.synthetic_data import col_corr, generate_synthetic_data, ratio_model
 
+t0 = time.time()
+
 # set the parameters of the synthetic data
-num_ind = 1000
+num_ind = 20000
 num_neurons = 50
 mean_r = 20
 mean_g = 30
@@ -35,6 +41,11 @@ red_bleached, green_bleached, a_true, m_true = generate_synthetic_data(
     beta=beta,
     multiplicative=False,
 )
+t1 = time.time()
+print(t1 - t0)
+t0 = t1
+# %% [markdown]
+## Preprocessing
 
 # %% [markdown]
 ## Preprocessing
@@ -42,12 +53,17 @@ red_bleached, green_bleached, a_true, m_true = generate_synthetic_data(
 # divide out the photobleaching
 red = tp.photobleach_correction(red_bleached)
 green = tp.photobleach_correction(green_bleached)
-
+t1 = time.time()
+print(t1 - t0)
+t0 = t1
 # get rid of nans via linear interpolation
 red = tp.interpolate_over_nans(red)
 green = tp.interpolate_over_nans(green)
 
 
+t1 = time.time()
+print(t1 - t0)
+t0 = t1
 ## Inference the model parameters
 trained_variables = tm.tmac_ac(red, green, truncate_freq=False)
 # pull out the trained variables
@@ -60,6 +76,10 @@ variance_m_trained = trained_variables["variance_m"]
 length_scale_a_trained = trained_variables["length_scale_a"]
 length_scale_m_trained = trained_variables["length_scale_m"]
 
+t1 = time.time()
+print(t1 - t0)
+t0 = t1
+
 ## Plotting ##
 
 
@@ -69,7 +89,7 @@ ratio = ratio_model(red, green, tau_a_true / 2)
 # choose which neuron to plot and at what time indicies
 plot_ind = 0
 plot_start = 150
-plot_time = 100
+plot_time = 1000
 
 fig = plt.figure()
 green_fold_change = green / np.mean(green, axis=0)
