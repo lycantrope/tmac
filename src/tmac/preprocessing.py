@@ -9,8 +9,16 @@ from jax.scipy import optimize as joptimize
 from jax.scipy import signal as jsignal
 
 
+@partial(jax.jit, inline=True)
 def check_input_format(data: Any) -> jax.Array:
-
+    """Validates the input data type and ensures it is a 2D JAX array
+    Args: data: Any
+    Returns:
+        A 2D JAX array where 1D inputs are promoted to column vectors.
+    Raise:
+        TypeError: If the input is not a numpy or JAX array.
+        ValueError: If the input has more than 2 dimensions.
+    """
     if not isinstance(data, (np.ndarray, jax.Array)):
         raise TypeError("The red and green matricies must be the numpy or jax arrays")
 
@@ -19,10 +27,7 @@ def check_input_format(data: Any) -> jax.Array:
             f"The red and green matricies should be 1 or 2 dimensional: {data.ndim}"
         )
 
-    if data.ndim == 1:
-        data = data[:, None]
-
-    return jnp.array(data)
+    return jnp.atleast_2d(data)
 
 
 @jax.jit
@@ -30,7 +35,7 @@ def interpolate_over_nans(input_mat: Union[np.ndarray, jax.Array]) -> jax.Array:
     """Function to interpolate over NaN values along the first dimension of a matrix
 
     Args:
-        input_mat: numpy array, [time, neurons]
+        input_mat: numpy or jax array, [time, neurons]
 
     Returns: Interpolated input_mat, interpolated time
     """
@@ -76,7 +81,7 @@ def photobleach_correction(time_by_neurons: Union[np.ndarray, jax.Array]) -> jax
     This function can handle nans in the input
 
     Args:
-        time_by_neurons: numpy array [time, neurons]
+        time_by_neurons: numpy or jax array [time, neurons]
 
     Returns: time_by_neurons divided by the exponential
     """

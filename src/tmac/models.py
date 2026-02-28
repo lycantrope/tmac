@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Tuple, Union
+from typing import Dict, Tuple, Union
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +18,7 @@ def tmac_ac(
     red_np: Union[np.ndarray, jax.Array],
     green_np: Union[np.ndarray, jax.Array],
     truncate_freq: bool = True,
-) -> Tuple[jax.Array, jax.Array, jax.Array]:
+) -> Dict[str, jax.Array]:
     """Implementation of the Two-channel motion artifact correction method (TMAC)
 
     This is tmac_ac because it is the additive and circular boundary version
@@ -26,12 +26,12 @@ def tmac_ac(
     shared motion artifacts between the two channels
 
     Args:
-        red_np: numpy array, [time, neurons], activity independent channel
-        green_np: numpy array, [time, neurons], activity dependent channel
+        red_np: numpy or jax array, [time, neurons], activity independent channel
+        green_np: numpy or jax array, [time, neurons], activity dependent channel
         truncate_freq: boolean, if true truncates low amplitude frequencies in Fourier domain. This should give the same
             results but may give sensitivity to the initial conditions
 
-    Returns: a_trained, m_trained, trained_params
+    Returns: trained_params
     """
 
     # optimization is performed using Scipy optimize, so all tensors should stay on the CPU
@@ -127,11 +127,16 @@ def tmac_ac(
     a_trained, m_trained = _tmac_posterior_all(
         trained_params, red, red_fft, green, green_fft
     )
-    return (
-        a_trained,
-        m_trained,
-        trained_params,
-    )
+    return {
+        "a": a_trained,
+        "m": m_trained,
+        "variance_r_noise": trained_params[0],
+        "variance_g_noise": trained_params[1],
+        "variance_a": trained_params[2],
+        "length_scale_a": trained_params[3],
+        "variance_m": trained_params[4],
+        "length_scale_m": trained_params[5],
+    }
 
 
 @jax.jit
@@ -139,7 +144,7 @@ def initialize_length_scale(y: jax.Array) -> float:
     """Function to fit a Gaussian to the autocorrelation of y
 
     Args:
-        y: jax vector
+        y: jax array
 
     Returns: Standard deviation of a Gaussian fit to the autocorrelation of y
     """

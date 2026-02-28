@@ -49,21 +49,16 @@ green = tp.interpolate_over_nans(green)
 
 
 ## Inference the model parameters
-a_trained, m_trained, trained_variables = tm.tmac_ac(
-    red,
-    green,
-    truncate_freq=False,
-)
+trained_variables = tm.tmac_ac(red, green, truncate_freq=False)
 # pull out the trained variables
-(
-    variance_r_noise_trained,
-    variance_g_noise_trained,
-    variance_a_trained,
-    variance_m_trained,
-    length_scale_a_trained,
-    length_scale_m_trained,
-) = trained_variables
-
+a_trained = trained_variables["a"]
+m_trained = trained_variables["m"]
+variance_r_noise_trained = trained_variables["variance_r_noise"]
+variance_g_noise_trained = trained_variables["variance_g_noise"]
+variance_a_trained = trained_variables["variance_a"]
+variance_m_trained = trained_variables["variance_m"]
+length_scale_a_trained = trained_variables["length_scale_a"]
+length_scale_m_trained = trained_variables["length_scale_m"]
 
 ## Plotting ##
 
