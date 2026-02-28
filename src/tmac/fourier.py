@@ -7,7 +7,7 @@ import numpy as np
 
 
 @partial(jax.jit, static_argnums=(0,))
-def get_fourier_freq(t_max: int):
+def get_fourier_freq(t_max: int) -> jax.Array:
     """Returns the frequencies for a vector of length t_max"""
     n_sin = (t_max - 1) // 2  # number of sine terms (negative freqs)
     # n_cos = t_max - n_sin  # number of cosine terms (positive freqs)
@@ -41,7 +41,7 @@ def get_fourier_basis(n_ind: int) -> Tuple[jax.Array, jax.Array]:
 
 
 @jax.jit
-def real_fft(x: jax.Array):
+def real_fft(x: jax.Array) -> jax.Array:
     """Performs a real discrete 1D Fourier transform of the columns of x"""
     single_vec = x.ndim == 1
     if single_vec:
@@ -66,7 +66,7 @@ def real_fft(x: jax.Array):
 
 
 @jax.jit
-def real_ifft(x_hat: jax.Array):
+def real_ifft(x_hat: jax.Array) -> jax.Array:
     """Performs an inverse of a real discrete 1D Fourier transform of the columns of x"""
 
     single_vec = x_hat.ndim == 1

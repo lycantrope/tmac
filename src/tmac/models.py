@@ -1,10 +1,12 @@
 from functools import partial
-from typing import Tuple
+from typing import Tuple, Union
 
 import jax
 import jax.numpy as jnp
-from jax.scipy import optimize as joptimize, stats as jstats
 import jaxopt
+import numpy as np
+from jax.scipy import optimize as joptimize
+from jax.scipy import stats as jstats
 
 import tmac.fourier as tfo
 import tmac.preprocessing as pp
@@ -13,9 +15,9 @@ import tmac.probability_distributions as tpd
 
 @partial(jax.jit, static_argnames=("truncate_freq"))
 def tmac_ac(
-    red_np,
-    green_np,
-    truncate_freq=True,
+    red_np: Union[np.ndarray, jax.Array],
+    green_np: Union[np.ndarray, jax.Array],
+    truncate_freq: bool = True,
 ) -> Tuple[jax.Array, jax.Array, jax.Array]:
     """Implementation of the Two-channel motion artifact correction method (TMAC)
 
@@ -133,7 +135,7 @@ def tmac_ac(
 
 
 @jax.jit
-def initialize_length_scale(y: jax.Array):
+def initialize_length_scale(y: jax.Array) -> float:
     """Function to fit a Gaussian to the autocorrelation of y
 
     Args:

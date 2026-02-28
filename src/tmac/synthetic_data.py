@@ -1,12 +1,14 @@
 import jax
 import jax.numpy as jnp
 from jax import random
-from jax.scipy import signal as jsignal, stats as jstats
+from jax.scipy import signal as jsignal
+from jax.scipy import stats as jstats
 
 import tmac.fourier as tfo
 
 
-def softplus(x, beta: float = 50) -> jax.Array:
+@jax.jit(inline=True)
+def softplus(x: jax.Array, beta: float = 50) -> jax.Array:
     return jnp.log(1 + jnp.exp(beta * x)) / beta
 
 
@@ -109,7 +111,7 @@ def generate_synthetic_data(
 
 
 @jax.jit
-def col_corr(a_true, a_hat):
+def col_corr(a_true: jax.Array, a_hat: jax.Array) -> jax.Array:
     """Computes Pearson correlation for each column between two matrices. Assumes shapes are (rows, cols)."""
 
     def compute_corr(true_col, hat_col):
@@ -129,7 +131,7 @@ def col_corr(a_true, a_hat):
     return vmapped_corr(a_true, a_hat)
 
 
-def ratio_model(red, green, tau):
+def ratio_model(red: jax.Array, green: jax.Array, tau: float) -> jax.Array:
     # calculate the prediction from the ratio model
     # assumes red
     red = red / jnp.mean(red, axis=0)

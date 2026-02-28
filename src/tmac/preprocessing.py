@@ -1,12 +1,15 @@
+from functools import partial
+from typing import Any, Union
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-
-from jax.scipy import optimize as joptimize, signal as jsignal
 from jax import lax
+from jax.scipy import optimize as joptimize
+from jax.scipy import signal as jsignal
 
 
-def check_input_format(data) -> jax.Array:
+def check_input_format(data: Any) -> jax.Array:
 
     if not isinstance(data, (np.ndarray, jax.Array)):
         raise TypeError("The red and green matricies must be the numpy or jax arrays")
@@ -22,7 +25,8 @@ def check_input_format(data) -> jax.Array:
     return jnp.array(data)
 
 
-def interpolate_over_nans(input_mat):
+@jax.jit
+def interpolate_over_nans(input_mat: Union[np.ndarray, jax.Array]) -> jax.Array:
     """Function to interpolate over NaN values along the first dimension of a matrix
 
     Args:
@@ -34,10 +38,9 @@ def interpolate_over_nans(input_mat):
     input_mat = check_input_format(input_mat)
 
     # if t is not specified, assume it has been sampled at regular intervals
-
     def fill_nan_smooth(arr, kernel_size=3) -> jax.Array:
         # 1. Create a mask of NaNs
-        nan_mask = jnp.isnan(arr)
+        nan_mask = ~jnp.isfinite(arr)
 
         # 2. Replace NaNs with mean for convolution
         clean_arr = jnp.nan_to_num(arr, nan=jnp.nanmean(arr))
@@ -63,7 +66,7 @@ def interpolate_over_nans(input_mat):
 
 
 @jax.jit
-def photobleach_correction(time_by_neurons):
+def photobleach_correction(time_by_neurons: Union[np.ndarray, jax.Array]) -> jax.Array:
     """Function to fit an exponential with a shared tau to all the columns of time_by_neurons
 
     This function fits the function A*exp(-t / tau) to the matrix time_by_neurons. Tau is a single time constant shared

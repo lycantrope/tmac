@@ -7,8 +7,10 @@ import numpy as np
 import tmac.fourier as tfo
 
 
-@jax.jit
-def covariance_fft(variance, scale, freq, cutoff):
+@partial(jax.jit, inline=True)
+def covariance_fft(
+    variance: float, scale: float, freq: jax.Array, cutoff: float
+) -> jax.Array:
     return (
         np.sqrt(2 * np.pi)
         * variance
