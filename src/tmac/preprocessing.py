@@ -6,7 +6,6 @@ import jax.numpy as jnp
 import numpy as np
 from jax import lax
 from jax.scipy import optimize as joptimize
-from jax.scipy import signal as jsignal
 
 
 @partial(jax.jit, inline=True)
@@ -42,7 +41,6 @@ def interpolate_over_nans(input_mat: Union[np.ndarray, jax.Array]) -> jax.Array:
 
     input_mat = check_input_format(input_mat)
 
-    # if t is not specified, assume it has been sampled at regular intervals
     def fill_nan_smooth(arr, kernel_size=3) -> jax.Array:
         # 1. Create a mask of NaNs
         nan_mask = ~jnp.isfinite(arr)
@@ -55,19 +53,20 @@ def interpolate_over_nans(input_mat: Union[np.ndarray, jax.Array]) -> jax.Array:
 
         # 4. Convolve to get local averages
         # For 1D, use convolve. For 2D, adjust kernel and input dimensions.
-        smoothed = jsignal.convolve(clean_arr, kernel, mode="same")
+        smoothed = jnp.convolve(clean_arr, kernel, mode="same")
 
         # 5. Fill only the original NaN locations with smoothed values
         return jnp.where(nan_mask, smoothed, arr)  # type: ignore
 
-    # loop through each column of the data and interpolate them separately
+    # Loop over the input_mat if is nan return original data, else return fill_nan_smooth
+    @partial(jax.vmap, in_axes=1, out_axes=1)
+    def fill_nan_smooth_all(all_nan, arr):
+        return lax.cond(all_nan[0], lambda x: x, fill_nan_smooth, arr)
 
-    output_mat = lax.map(
-        lambda x: lax.select(jnp.all(~jnp.isfinite(x)), x, fill_nan_smooth(x)),
-        input_mat.T,
-    )
+    # check each neuron if all data is nan.
+    all_nan = jnp.all(~jnp.isfinite(input_mat), axis=0, keepdims=True)
 
-    return output_mat.T
+    return fill_nan_smooth_all(all_nan, input_mat)
 
 
 @jax.jit
