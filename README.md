@@ -18,10 +18,10 @@ the same motion artifact component. TMAC could therefore be applied to a wide ra
 
 | Framework           | Sample Size | Data Sync | Preprocess | tmac |
 |---------------------|-------------|-----------|------------|------|
-| SciPy+Torch         | 1,000 × 50  | 0.03      | 0.14       | 5.07 |
-| SciPy+Torch         | 20,000 × 50 | 8.03      | 2.8        | 24.6 |
-| Jax-x66 (this fork) | 1,000 × 50  | 1.56      | 0.74       | 3.20 |
-| Jax-x66 (this fork) | 20,000 × 50 | 3.7       | 0.9        | 4.08 |
+| SciPy+Torch         | 1,000 × 50  | 0.03s      | 0.14s       | 5.07s |
+| SciPy+Torch         | 20,000 × 50 | 8.03s      | 2.8s        | 24.6s |
+| Jax-x66 (this fork) | 1,000 × 50  | 1.56s      | 0.74s       | 3.20s |
+| Jax-x66 (this fork) | 20,000 × 50 | 3.7s       | 0.9s        | 4.08s |
 
 
 ### Installation:
@@ -56,8 +56,8 @@ import tmac.preprocessing as tp
 red_corrected = tp.photobleach_correction(red)
 green_corrected = tp.photobleach_correction(green)
 
-red_interp = tp.interpolate_over_nans(red_corrected)[0]
-green_interp = tp.interpolate_over_nans(green_corrected)[0]
+red_interp = tp.interpolate_over_nans(red_corrected)
+green_interp = tp.interpolate_over_nans(green_corrected)
 
 trained_variables = tm.tmac_ac(red_interp, green_interp)
 ```
