@@ -92,41 +92,32 @@ def tmac_ac(
             truncate_freq=truncate_freq,
         )
 
-    @partial(jax.vmap, in_axes=1, out_axes=1)
-    def _tmac_estimate_all(init_variances, r, r_fft, g, g_fft):
-        trained_variances = joptimize.minimize(
-            evidence_loss_fn,
-            jnp.log(init_variances),
-            args=(r, r_fft, g, g_fft),
-            method="BFGS",
-        )
-        return jnp.exp(trained_variances.x)
-
-    # loop through each neuron and perform inference
-
-    # calculate the posterior values
-    # The posterior is gaussian so we don't need to optimize, we find a and m in one step
-    @partial(jax.vmap, in_axes=1, out_axes=-1)
-    def _tmac_posterior_all(trained_variances, r, r_fft, g, g_fft):
-        trained_variances = jnp.log(trained_variances)
-        return tpd.tmac_posterior(
+    def per_neuron(xs):
+        iv, r, r_fft, g, g_fft = xs
+        trained_log_v = joptimize.minimize(
+            evidence_loss_fn, jnp.log(iv), args=(r, r_fft, g, g_fft), method="BFGS"
+        ).x
+        am = tpd.tmac_posterior(
             r,
             r_fft,
-            trained_variances[0],
+            trained_log_v[0],
             g,
             g_fft,
-            trained_variances[1],
-            trained_variances[2],
-            trained_variances[3],
-            trained_variances[4],
-            trained_variances[5],
+            trained_log_v[1],
+            trained_log_v[2],
+            trained_log_v[3],
+            trained_log_v[4],
+            trained_log_v[5],
             truncate_freq=truncate_freq,
         )
+        return jnp.exp(trained_log_v), am
 
-    trained_params = _tmac_estimate_all(init_parameters, red, red_fft, green, green_fft)
-    a_trained, m_trained = _tmac_posterior_all(
-        trained_params, red, red_fft, green, green_fft
+    params, am = jax.lax.map(
+        per_neuron, (init_parameters.T, red.T, red_fft.T, green.T, green_fft.T)
     )
+    trained_params = params.T  # [6, C]
+    a_trained, m_trained = am[:, 0, :].T, am[:, 1, :].T  # [T, C]
+
     return {
         "a": a_trained,
         "m": m_trained,
