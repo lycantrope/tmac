@@ -5,19 +5,25 @@ import jax
 import jax.numpy as jnp
 import jaxopt
 import numpy as np
-from jax.scipy import optimize as joptimize
+import optax
 from jax.scipy import stats as jstats
+from optax._src.base import GradientTransformationExtraArgs
 
 import tmac.fourier as tfo
 import tmac.preprocessing as pp
 import tmac.probability_distributions as tpd
+from tmac import optimize
+
+_OPT_LBFGS: GradientTransformationExtraArgs = optax.lbfgs(
+    linesearch=optax.scale_by_zoom_linesearch(max_linesearch_steps=30)
+)
 
 
-@partial(jax.jit, static_argnames=("truncate_freq"))
+@partial(jax.jit, static_argnames=("truncate_freq",))
 def tmac_ac(
     red_np: Union[np.ndarray, jax.Array],
     green_np: Union[np.ndarray, jax.Array],
-    truncate_freq: bool = True,
+    truncate_freq: bool = False,
 ) -> Dict[str, jax.Array]:
     """Implementation of the Two-channel motion artifact correction method (TMAC)
 
@@ -28,7 +34,8 @@ def tmac_ac(
     Args:
         red_np: numpy or jax array, [time, neurons], activity independent channel
         green_np: numpy or jax array, [time, neurons], activity dependent channel
-        truncate_freq: boolean, if true truncates low amplitude frequencies in Fourier domain. This should give the same
+        truncate_freq: boolean, default to false, since jax will not gain any speedup,
+            If true truncates low amplitude frequencies in Fourier domain. This should give the same
             results but may give sensitivity to the initial conditions
 
     Returns: trained_params
@@ -70,33 +77,24 @@ def tmac_ac(
         axis=0,
     )
 
-    # define the evidence loss function. This function takes in and returns pytorch tensors
-    def evidence_loss_fn(
-        training_variables,
-        red,
-        red_fft,
-        green,
-        green_fft,
-    ):
-        return -tpd.tmac_evidence(
-            red,
-            red_fft,
-            training_variables[0],
-            green,
-            green_fft,
-            training_variables[1],
-            training_variables[2],
-            training_variables[3],
-            training_variables[4],
-            training_variables[5],
+    def per_neuron(xs, n_steps=100):
+        iv, r, r_fft, g, g_fft = xs
+        loss_fn = lambda log_v: -tpd.tmac_evidence(
+            r,
+            r_fft,
+            log_v[0],
+            g,
+            g_fft,
+            log_v[1],
+            log_v[2],
+            log_v[3],
+            log_v[4],
+            log_v[5],
             truncate_freq=truncate_freq,
         )
 
-    def per_neuron(xs):
-        iv, r, r_fft, g, g_fft = xs
-        trained_log_v = joptimize.minimize(
-            evidence_loss_fn, jnp.log(iv), args=(r, r_fft, g, g_fft), method="BFGS"
-        ).x
+        trained_log_v = optimize._lbfgs_minimize(loss_fn, jnp.log(iv), n_steps=n_steps)
+
         am = tpd.tmac_posterior(
             r,
             r_fft,
@@ -146,22 +144,11 @@ def initialize_length_scale(y: jax.Array) -> float:
 
     p_init = jnp.array((jnp.max(y_corr), 1.0))
 
-    def gaussian_residuals(p, x, y_corr):
-        """
-        p[0]: Amplitude (Scale)
-        p[1]: Standard Deviation (Sigma)
-        """
-        # Using jax.scipy.stats ensures Autograd can calculate the derivative
-        amplitude = p[0]
-        sigma = jnp.abs(p[1]) + 1e-6
-        prediction = amplitude * jstats.norm.pdf(x, loc=0, scale=sigma)
-        return prediction - y_corr
+    def gaussian_residue(q):
+        amplitude, sigma = jnp.exp(q[0]), jnp.exp(q[1])
+        return jnp.sum((amplitude * jstats.norm.pdf(x, 0.0, sigma) - y_corr) ** 2)
 
-    # 1. Initialize the solver
-    lm = jaxopt.LevenbergMarquardt(residual_fun=gaussian_residuals)
-
-    # 2. Run the optimization
-    # JAX will compile the math, the gradients, and the solver logic into one kernel
-    p_hat = lm.run(p_init, x=x, y_corr=y_corr)
-
-    return p_hat.params[1]
+    q_hat = optimize._lbfgs_minimize(
+        gaussian_residue, jnp.array((jnp.log(jnp.max(y_corr)), 0.0)), n_steps=100
+    )
+    return jnp.exp(q_hat[1])

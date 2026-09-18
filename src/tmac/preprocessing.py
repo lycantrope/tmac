@@ -7,6 +7,8 @@ import numpy as np
 from jax import lax
 from jax.scipy import optimize as joptimize
 
+from tmac import optimize
+
 
 @partial(jax.jit, inline=True)
 def check_input_format(data: Any) -> jax.Array:
@@ -29,8 +31,28 @@ def check_input_format(data: Any) -> jax.Array:
     return jnp.atleast_2d(data)
 
 
+def _interp_nans_column(y) -> jax.Array:
+    n = y.shape[0]
+    idx = jnp.arange(n)
+    valid = jnp.isfinite(y)
+
+    prev = lax.cummax(jnp.where(valid, idx, -1))  # last valid index <= i
+    nxt = lax.cummin(jnp.where(valid, idx, n), reverse=True)  # next valid index >= i
+
+    prev_c = jnp.clip(prev, 0, n - 1)
+    nxt_c = jnp.clip(nxt, 0, n - 1)
+    y0, y1 = y[prev_c], y[nxt_c]
+
+    y0 = jnp.where(prev < 0, y1, y0)  # leading NaNs -> hold first valid value
+    y1 = jnp.where(nxt >= n, y0, y1)  # trailing NaNs -> hold last valid value
+
+    span = jnp.where(nxt_c == prev_c, 1, nxt_c - prev_c).astype(y.dtype)
+    w = (idx - prev_c).astype(y.dtype) / span
+    return jnp.where(valid, y, y0 + w * (y1 - y0))
+
+
 @jax.jit
-def interpolate_over_nans(input_mat: Union[np.ndarray, jax.Array]) -> jax.Array:
+def interpolate_over_nans(input_mat):
     """Function to interpolate over NaN values along the first dimension of a matrix
 
     Args:
@@ -38,35 +60,8 @@ def interpolate_over_nans(input_mat: Union[np.ndarray, jax.Array]) -> jax.Array:
 
     Returns: Interpolated input_mat, interpolated time
     """
-
     input_mat = check_input_format(input_mat)
-
-    def fill_nan_smooth(arr, kernel_size=3) -> jax.Array:
-        # 1. Create a mask of NaNs
-        nan_mask = ~jnp.isfinite(arr)
-
-        # 2. Replace NaNs with mean for convolution
-        clean_arr = jnp.nan_to_num(arr, nan=jnp.nanmean(arr))
-
-        # 3. Create a kernel for local averaging (e.g., 3x3)
-        kernel = jnp.ones(kernel_size) / kernel_size
-
-        # 4. Convolve to get local averages
-        # For 1D, use convolve. For 2D, adjust kernel and input dimensions.
-        smoothed = jnp.convolve(clean_arr, kernel, mode="same")
-
-        # 5. Fill only the original NaN locations with smoothed values
-        return jnp.where(nan_mask, smoothed, arr)  # type: ignore
-
-    # Loop over the input_mat if is nan return original data, else return fill_nan_smooth
-    @partial(jax.vmap, in_axes=1, out_axes=1)
-    def fill_nan_smooth_all(all_nan, arr):
-        return lax.cond(all_nan[0], lambda x: x, fill_nan_smooth, arr)
-
-    # check each neuron if all data is nan.
-    all_nan = jnp.all(~jnp.isfinite(input_mat), axis=0, keepdims=True)
-
-    return fill_nan_smooth_all(all_nan, input_mat)
+    return jax.vmap(_interp_nans_column, in_axes=1, out_axes=1)(input_mat)
 
 
 @jax.jit
@@ -87,7 +82,7 @@ def photobleach_correction(time_by_neurons: Union[np.ndarray, jax.Array]) -> jax
 
     # convert inputs to tensors
     time_by_neurons = check_input_format(time_by_neurons)
-    t = jnp.arange(time_by_neurons.shape[0])
+    t = jnp.arange(time_by_neurons.shape[0], dtype=time_by_neurons.dtype)
     tau_0 = t[-1, None] / 2
     a_0 = jnp.nanmean(time_by_neurons, axis=0)
     p_0 = jnp.concatenate((tau_0, a_0), axis=0)
@@ -95,7 +90,7 @@ def photobleach_correction(time_by_neurons: Union[np.ndarray, jax.Array]) -> jax
     # mask out any un f
     isfinite = jnp.isfinite(time_by_neurons)
 
-    def loss_fn(p, t, time_by_neurons, isfinite):
+    def loss_fn(p):
         exponential_approx = p[None, 1:] * jnp.exp(-t[:, None] / p[0])
         # set unmeasured values to 0, so they don't show up in the sum
         squared_error = (
@@ -108,13 +103,9 @@ def photobleach_correction(time_by_neurons: Union[np.ndarray, jax.Array]) -> jax
         ) ** 2
         return squared_error.sum()  # type: ignore
 
-    p_hat = joptimize.minimize(
-        loss_fn,
-        p_0,
-        args=(t, time_by_neurons, isfinite),
-        method="BFGS",
-    )
-    time_by_neurons_corrected = time_by_neurons / jnp.exp(-t[:, None] / p_hat.x[0])
+    p_hat = optimize._lbfgs_minimize(loss_fn, p_0, n_steps=100)
+
+    time_by_neurons_corrected = time_by_neurons / jnp.exp(-t[:, None] / p_hat[0])
     # put the unmeasured value nans back in
     time_by_neurons_corrected = jnp.where(isfinite, time_by_neurons_corrected, jnp.nan)
 

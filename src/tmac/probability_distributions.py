@@ -98,8 +98,8 @@ def tmac_evidence(
 
     # we filter out the truncate sequence.
     log_det_term = -(
-        jnp.where(mask, jnp.log(f_det), 0.0).sum()
-        + jnp.where(mask, jnp.log(covariance_a_fft * covariance_m_fft), 0.0).sum()
+        jnp.log(jnp.where(mask, f_det, 1.0)).sum()
+        + jnp.log(jnp.where(mask, covariance_a_fft * covariance_m_fft, 1.0)).sum()
         + t_max * jnp.log(variance_g_noise * variance_r_noise)
     )
 
