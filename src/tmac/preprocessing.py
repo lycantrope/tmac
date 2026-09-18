@@ -5,7 +5,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import lax
-from jax.scipy import optimize as joptimize
 
 from tmac import optimize
 

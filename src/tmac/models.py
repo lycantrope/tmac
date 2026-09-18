@@ -3,18 +3,16 @@ from typing import Dict, Tuple, Union
 
 import jax
 import jax.numpy as jnp
-import jaxopt
 import numpy as np
 import optax
 from jax.scipy import stats as jstats
-from optax._src.base import GradientTransformationExtraArgs
 
 import tmac.fourier as tfo
 import tmac.preprocessing as pp
 import tmac.probability_distributions as tpd
 from tmac import optimize
 
-_OPT_LBFGS: GradientTransformationExtraArgs = optax.lbfgs(
+_OPT_LBFGS = optax.lbfgs(
     linesearch=optax.scale_by_zoom_linesearch(max_linesearch_steps=30)
 )
 

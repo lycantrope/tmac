@@ -5,11 +5,10 @@ description = "Two-channel motion artifact correction"
 authors = [
     { name = "Matthew S. Creamer", email = "matthew.s.creamer@gmail.com" },
     { name = "Chung-Kuan CHEN", email = "b97b01045@gmail.com" },
-
 ]
 readme = "README.md"
 classifiers = ["Programming Language :: Python :: 3"]
-dependencies = ["jaxopt", "numpy"]
+dependencies = ["numpy"]
 keywords = [
     "python",
     "calcium",
@@ -21,26 +20,20 @@ keywords = [
 ]
 license = { file = "LICENSE.md" }
 urls = { homepage = "https://github.com/Nondairy-Creamer/tmac", source = "https://github.com/lycantrope/tmac" }
-
+requires-python = ">=3.10"
 [build-system]
 requires = ["uv_build>=0.10.4,<0.11.0"]
 build-backend = "uv_build"
 
 [project.optional-dependencies]
-cpu = ["jax"]
-tpu = ["jax[tpu]"]
-cuda = ["jax[cuda13]"]
+cpu = ["jax", "optax"]
+tpu = ["jax[tpu]", "optax"]
+cuda = ["jax[cuda]", "optax"]
 
 
 [dependency-groups]
-dev = [
-    "h5py>=3.15.1",
-    "ipykernel>=7.2.0",
-    "matplotlib>=3.10.8",
-    "ruff>=0.15.2",
-    "torch>=2.10.0",
-]
-cpu = ["jax"]
+dev = ["h5py>=3.15.1", "ipykernel>=7.2.0", "matplotlib>=3.10.8", "ruff>=0.15.2"]
+cpu = ["jax", "optax"]
 
 [tool.uv]
 default-groups = ["dev", "cpu"]
